@@ -10,7 +10,7 @@ today is the judge itself and its self-test, which runs on every push.
 ## What it does
 
 A **goal** is a public Lean 4 repository laid out like the
-[goal template](https://github.com/TheColonyAI/proving-ground-goal-template). Each **problem** is
+[goal template](https://github.com/colpg/proving-ground-goal-template). Each **problem** is
 one formal statement, named in the goal's library. An **answer** is a Lean file: a proof, a
 refutation, or the implication of a cut.
 

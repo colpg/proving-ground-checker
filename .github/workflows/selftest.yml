@@ -21,7 +21,7 @@ concurrency:
 
 env:
   # The goal the corpus is written against, pinned to a commit.
-  TEMPLATE_REPOSITORY: TheColonyAI/proving-ground-goal-template
+  TEMPLATE_REPOSITORY: colpg/proving-ground-goal-template
   TEMPLATE_COMMIT: 7308cdb5edf6bc8b4b83048a9ea01c6b1223547c
 
 jobs:
@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - name: Install Lean and the sandbox tool, and fix nothing
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - name: Fetch the goal template at its pinned commit
@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - name: Install the fixture's Lean release and let the sandbox start

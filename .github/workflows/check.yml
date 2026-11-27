@@ -64,7 +64,7 @@ jobs:
       ANSWER_URL: ${{ inputs.answer_url }}
       ANSWER_SHA256: ${{ inputs.answer_sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -111,7 +111,7 @@ jobs:
             --answer "$RUNNER_TEMP/answer.lean" --answer-sha256 "$ANSWER_SHA256" --submission "$SUBMISSION" > verdict.json
           python3 -c "import json; v = json.load(open('verdict.json')); print(v['outcome'], v['reason_code'], '|', v.get('message', ''))"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verdict
           path: verdict.json

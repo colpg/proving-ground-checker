@@ -1,5 +1,5 @@
 {
- "goal": "TheColonyAI/proving-ground-goal-template",
+ "goal": "colpg/proving-ground-goal-template",
  "answers": [
   {
    "file": "sorry.lean",
