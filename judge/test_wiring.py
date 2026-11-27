@@ -2,8 +2,9 @@
 
 The `lies` workflow tests what a check does when its answer job lies, on a copy of check.yml's
 challenge and verdict jobs. If the copy drifted, that test would pass while the real workflow had
-changed. This compares the parts the test rests on: which job may ask for an identity token, the
-steps that judge and that ask for the token, and how the files that matter are uploaded.
+changed. This compares the parts the test rests on: which job may ask for an identity token, where
+the verdict job takes the challenge's hash from, the steps that judge and that ask for the token,
+and how the files that matter are uploaded.
 Run it with: python3 judge/test_wiring.py   (needs PyYAML)"""
 import os, sys
 import yaml
@@ -40,6 +41,13 @@ cv, lv = check["jobs"]["verdict"], lie["jobs"]["verdict"]
 same("only the verdict job may ask for an identity token, in both", may_ask(check), may_ask(lie))
 same("  and that is the verdict job alone", may_ask(check), ["verdict"])
 same("the verdict job's permissions", cv.get("permissions"), lv.get("permissions"))
+# The fingerprint, the plan and the toolchain must reach the verdict job as the challenge job's
+# outputs, and not through the store of files: the check for a replaced challenge export rests on it.
+FROM_OUTPUTS = {"FINGERPRINT": "${{ needs.challenge.outputs.fingerprint }}", "PLAN": "${{ needs.challenge.outputs.plan }}", "TOOLCHAIN": "${{ needs.challenge.outputs.toolchain }}"}
+taken = lambda job: {k: (job.get("env") or {}).get(k) for k in FROM_OUTPUTS}
+same("where the verdict job takes the fingerprint, the plan and the toolchain from", taken(cv), taken(lv))
+same("  and that is the challenge job's outputs", taken(cv), FROM_OUTPUTS)
+same("the outputs the challenge job gives", check["jobs"]["challenge"].get("outputs"), lie["jobs"]["challenge"].get("outputs"))
 same("the step that judges the two exports", step(cv, "Run the controls, judge").get("run"), step(lv, "Run the controls, judge").get("run"))
 same("the step that asks for the token", step(cv, "Ask GitHub for a token").get("run"), step(lv, "Ask GitHub for a token").get("run"))
 up = lambda job, name: {k: v for k, v in step(job, uses="actions/upload-artifact@", name=name).get("with", {}).items() if k in ("path", "overwrite", "if-no-files-found")}
