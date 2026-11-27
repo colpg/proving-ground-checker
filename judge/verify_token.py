@@ -13,7 +13,12 @@ This script checks, in order:
   - the token's signature, against GitHub's published keys (or the keys in --jwks);
   - its issuer, and that its audience is `proving-ground-verdict:sha256:<hash of the verdict file>`;
   - the repository, the run, the attempt, the workflow file, the commit and the event it names,
-    against the values given here, which the caller takes from its own record of what it started.
+    against the values given here, which the caller takes from its own record of what it started;
+  - that the job ran on one of GitHub's own machines. Whoever owns a self-hosted machine could
+    have it ask for a token for any verdict.
+
+GitHub changes its signing keys from time to time. A consumer that wants its record to stay
+checkable should keep the key each token was checked against (its `kid`, `n` and `e`) beside it.
 
 The token's expiry is not checked: the token is bound to one run and one verdict.
 
@@ -55,7 +60,7 @@ def check(verdict_bytes, token, keys, repository, run_id, sha, run_attempt="1", 
     except (ValueError, KeyError, TypeError) as e:
         return "the token could not be read: %s" % type(e).__name__, {}
     want = {"iss": ISSUER, "aud": AUDIENCE + hashlib.sha256(verdict_bytes).hexdigest(), "repository": repository, "run_id": str(run_id),
-            "run_attempt": str(run_attempt), "sha": sha, "workflow_sha": sha, "event_name": event}
+            "run_attempt": str(run_attempt), "sha": sha, "workflow_sha": sha, "event_name": event, "runner_environment": "github-hosted"}
     if ref: want["ref"] = ref
     for name, value in want.items():
         if str(claims.get(name)) != value: return "the token's %s is %r, not %r" % (name, claims.get(name), value), claims

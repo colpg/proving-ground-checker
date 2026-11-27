@@ -27,6 +27,14 @@ REFUSED = [
     '@[simp, tactic x] def f := 1', '@[simp,\n  implemented_by g] def f := 1', '@[ extern "c" ] def f := 1',
     'attribute [local command_elab x] f', 'attribute\n  [init] f', 'open Lean in\nmacro "x" : term => `(1)',
     'theorem t : True := by\n  first | run_tac pure () | trivial', '-- a comment that says #eval', '/- IO -/',
+    # an attribute list must be readable to its end as plain words, and hold only attributes an answer may use
+    '@[/- ] -/ command_elab Lean.Parser.Command.check] def f := 1', '@[deprecated "]" (since := "2026-01-01"), command_elab x] def f := 1',
+    'attribute [/- ] -/ extern "c_f"] f', '@[aesop safe (rule_sets := [A]), command_elab x] def f := 1', '@[simp -- ]\n, init] def f := 1',
+    '@[positivity _] def f := 1', '@[norm_num _ + _] def f := 1', '@[aesop norm tactic] def f := 1', '@[some_new_attribute] def f := 1',
+    '@[simp, some_new_attribute] theorem t : True := trivial', '@[] def f := 1', 'attribute [-simp] foo',
+    # names found in review that reach the elaborator or the system without the older words
+    'def f : Lean.Elab.Command.CommandElab := fun _ => pure ()', 'def f : Lean.Elab.Term.TermElab := x', 'import Lake', 'def f := Lake.testProc x',
+    'def f := Lean.Elab.runFrontend x', 'def f := Lean.loadDynlib x',
 ]
 ALLOWED = [
     'theorem t : True := trivial', 'theorem t : 2 + 2 = 4 := by decide', 'lemma t (a b : Nat) : a + b = b + a := by omega',
@@ -38,6 +46,9 @@ ALLOWED = [
     'def macros_done := 1', 'def elaborate := 1', 'def syntaxTree := 1', 'def IOO := 1', 'def myIO := 1', 'def unsafely := 1',
     'theorem t : True := by simp only [foo, -simprocs]', 'def initialized := 1', 'def f := x.run_cmds', 'def tactic := 1',
     'def init := 1', 'def extern := 1', 'theorem export_ok : True := trivial',
+    '@[simp, norm_cast] theorem t : True := trivial', '@[ext] theorem t : True := trivial', '@[reducible] def f := 1',
+    '@[to_additive] theorem t : True := trivial', '@[local simp, scoped instance] def f := 1', '@[simp ←] theorem t : True := trivial',
+    'attribute [local simp] foo bar', '@[simp]\ntheorem t : True := trivial', 'import Mathlib.Tactic.Linarith', 'open Lean.Elab.Tactic in\ntheorem t : True := trivial',
 ]
 
 wrong = 0

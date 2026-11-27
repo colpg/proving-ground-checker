@@ -76,6 +76,8 @@ jobs:
         run: python3 judge/test_verify_token.py
       - name: The check of a goal's dependencies
         run: python3 judge/test_deps.py
+      - name: The workflow whose answer job lies still copies the real one where it matters
+        run: python3 judge/test_wiring.py
 
   mathlib:
     runs-on: ubuntu-24.04
@@ -89,5 +91,12 @@ jobs:
       - name: Check the dependencies against the allow-list, then bring them in with their build cache
         # The fixture commits its lake-manifest.json, as a real goal does, so the check comes first.
         run: bash judge/deps.sh fixtures/mathlib-goal
+      - name: A goal's own build script, on a goal with dependencies
+        # tools/build.sh is the goal template's. It builds answers with the goal and its
+        # dependencies read-only, into a directory that is thrown away.
+        run: |
+          bash fixtures/mathlib-goal/tools/build.sh --check-sandbox
+          bash fixtures/mathlib-goal/tools/build.sh
+          test -z "$(ls -A fixtures/mathlib-goal/.lake/build)"
       - name: The honest answer accepted, the dishonest ones refused
         run: python3 judge/judge.py corpus --goal fixtures/mathlib-goal --corpus fixtures/mathlib-corpus/corpus.json

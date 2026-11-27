@@ -28,7 +28,8 @@ def token(pem, kid, claims, alg="RS256"):
 pem, jwk = new_key("k1"); other_pem, other_jwk = new_key("k2")
 VERDICT = b'{"outcome": "rejected"}\n'; REPO, RUN, SHA = "colpg/proving-ground-checker", "123", "a" * 40
 GOOD = {"iss": ISSUER, "aud": AUDIENCE + hashlib.sha256(VERDICT).hexdigest(), "repository": REPO, "run_id": RUN, "run_attempt": "1", "sha": SHA,
-        "workflow_sha": SHA, "event_name": "workflow_dispatch", "ref": "refs/tags/pin-1", "workflow_ref": REPO + "/.github/workflows/check.yml@refs/tags/pin-1"}
+        "workflow_sha": SHA, "event_name": "workflow_dispatch", "ref": "refs/tags/pin-1", "workflow_ref": REPO + "/.github/workflows/check.yml@refs/tags/pin-1",
+        "runner_environment": "github-hosted"}
 with_ = lambda **kw: dict(GOOD, **kw)
 good = token(pem, "k1", GOOD)
 CASES = [
@@ -43,6 +44,7 @@ CASES = [
     ("a token from another commit", VERDICT, token(pem, "k1", with_(sha="b" * 40, workflow_sha="b" * 40)), [jwk], False),
     ("a token whose workflow file is at another commit", VERDICT, token(pem, "k1", with_(workflow_sha="b" * 40)), [jwk], False),
     ("a token from a run started another way", VERDICT, token(pem, "k1", with_(event_name="pull_request")), [jwk], False),
+    ("a token from a machine that is not GitHub's own", VERDICT, token(pem, "k1", with_(runner_environment="self-hosted")), [jwk], False),
     ("a token from another issuer", VERDICT, token(pem, "k1", with_(iss="https://example.org")), [jwk], False),
     ("a token signed by a key that is not GitHub's", VERDICT, token(other_pem, "k1", GOOD), [jwk], False),
     ("a token signed by a key GitHub does not list", VERDICT, token(other_pem, "k2", GOOD), [jwk], False),

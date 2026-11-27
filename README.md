@@ -114,17 +114,34 @@ repository, where it runs for everyone who builds the goal. The judge's sandbox 
 checker.
 
 The form screen therefore refuses a file that would run code while it builds, with the reason
-`runs_code`. The rule is lexical and reads the raw text, comments and strings included. It refuses
-commands that run code or define syntax (`#eval`, `run_cmd`, `elab`, `macro`, `syntax`,
-`initialize`, `simproc` and their kin), the tactic `run_tac`, attributes that install code
-(`command_elab`, `tactic`, `implemented_by`, `extern`, `init` and their kin), and names that reach
-the system or the elaborator (`IO`, `unsafe`, `MetaM` and their kin). `judge/judge.py` has the list.
+`runs_code`. The rule is lexical and reads the raw text, comments and strings included. It refuses:
 
-No such list is complete for Lean, and the names are the thinnest part of it: `corpus/runs_code/
-macro.lean` reaches the file system through a macro without naming `IO` or `#eval` at all. That is
-why `macro` itself is refused, and why the screen is one layer of three. The others are outside
-this repository: every build of a goal runs in a sandbox, and committed answers are screened
-again when the rules change.
+- commands that run code or define syntax: `#eval`, `run_cmd`, `elab`, `macro`, `syntax`,
+  `initialize`, `simproc` and their kin;
+- the tactic `run_tac`;
+- every attribute that is not on a short list an answer may use, such as `simp`, `instance` and
+  `ext`. An attribute can install code, and a library can add such attributes faster than a list
+  of bad ones could follow. An attribute list must also be readable to its end as plain words:
+  Lean allows a comment or a string inside the brackets, and a `]` in one would hide what follows;
+- names that reach the system or the elaborator: `IO`, `unsafe`, `MetaM`, `Lake` and their kin.
+
+`judge/judge.py` has the lists.
+
+**The screen is a speed bump, and for a goal with dependencies it is no more than that.** No list
+is complete for Lean:
+
+- `corpus/runs_code/macro.lean` reaches the file system through a macro without naming `IO` or
+  `#eval` at all, which is why `macro` itself is refused.
+- A plain function of Lean's own, named nothing like the system, writes a file from inside an
+  elaborator.
+- A library's tactics can take code as an option. `fixtures/mathlib-corpus/linarith_oracle.lean`
+  hands an oracle of its own to Mathlib's `linarith`, which runs it while the file builds. The
+  screen lets that file through, its proof is honest, and it is accepted. The corpus keeps it as a
+  known gap, and shows on every run that it ran code with the screen on.
+
+So the screen is one layer of three, and the other two are outside this repository: every build
+of a goal runs in a sandbox that keeps nothing an answer's build wrote, and committed answers are
+screened again when the rules change. For a goal with dependencies, the sandbox is what holds.
 
 The judge must hold with the screen off. The corpus's files that attack the judge are run that way.
 
@@ -172,7 +189,9 @@ and a last job plays the consumer of verdicts.
 | It replaces the verdict in the store after the `verdict` job has run | The token does not vouch for what is in the store |
 
 It tests the mechanism on a copy of `check.yml`'s wiring. `check.yml` itself has no switch that
-makes its answer job lie, and should not have one.
+makes its answer job lie, and should not have one. `judge/test_wiring.py` compares the copy with
+the original where the test rests on it: which job may ask for a token, the steps that judge and
+that ask for it, and how the files that matter are uploaded.
 
 ## Limits, stated plainly
 
@@ -207,6 +226,7 @@ python3 judge/test_classify.py       # how the judge's output is read
 python3 judge/test_screen.py         # the screen for files that run code
 python3 judge/test_verify_token.py   # the check of a verdict's token (needs openssl)
 python3 judge/test_deps.py           # the check of a goal's dependencies
+python3 judge/test_wiring.py         # the lying-job workflow still copies the real one (needs PyYAML)
 ```
 
 You need Lean 4.36, Python 3.11 or later, and

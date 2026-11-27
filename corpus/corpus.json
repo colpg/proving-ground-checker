@@ -300,6 +300,15 @@
    "reason_code": "runs_code",
    "marker": ".lake/ran-macro",
    "what": "A `macro` that writes an evaluating command without naming one, and reaches the system without naming it. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/bracket.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-bracket",
+   "what": "An attribute that installs code, written after a `]` inside a comment, in a file that holds no other refused word. Found in review: a rule that read an attribute list up to the first `]` let it through. The proof beside it is honest, so the judge alone would accept the file."
   }
  ]
 }

@@ -82,10 +82,19 @@ RUNS_CODE = (
     ("a command that runs code", r"#eval|" + W("run_cmd", "run_elab", "run_meta", "initialize", "builtin_initialize")),
     ("a command that defines syntax or what it does", W("elab", "elab_rules", "macro", "macro_rules", "syntax", "declare_syntax_cat", r"(?:builtin_)?d?simproc(?:_decl)?")),
     ("a tactic or term that runs code", W("run_tac", "by_elab")),
-    ("a name that reaches the system or the elaborator", W("IO", "EIO", "BaseIO", "unsafeIO", "unsafeBaseIO", "unsafe", "MetaM", "TacticM", "TermElabM", "CommandElabM", "CoreM", "MacroM", "SimpM", "DelabM")),
+    ("a name that reaches the system or the elaborator", W("IO", "EIO", "BaseIO", "unsafeIO", "unsafeBaseIO", "unsafe", "MetaM", "TacticM", "TermElabM", "CommandElabM", "CoreM", "MacroM", "SimpM", "DelabM",
+                                                           "CommandElab", "TermElab", "Lake", "runFrontend", "loadDynlib")),
 )
-ATTRIBUTE = re.compile(r"(?:@\[|" + W("attribute") + r"\s*\[)([^\]]*)\]")
-CODE_ATTRIBUTE = re.compile(W(r"\w*(?:elab|macro|delab|tactic|simproc|formatter|parenthesizer|unexpander)\w*", "implemented_by", "extern", "export", "init", "builtin_init"))
+# An attribute can install code, and a library can add such attributes faster than a list of bad
+# ones could follow. So an answer may use only the attributes named here, and every other is refused.
+ALLOWED_ATTRIBUTES = frozenset(("simp simps reducible irreducible semireducible instance ext norm_cast push_cast coe refl symm trans congr gcongr mono "
+                                "fun_prop continuity measurability inline noinline specialize nolint inherit_doc elab_as_elim induction_eliminator "
+                                "cases_eliminator match_pattern class to_additive").split())
+ATTRIBUTE_OPEN = re.compile(r"@\[|" + W("attribute") + r"\s*\[")
+# What may stand between an attribute list's brackets. Lean allows a comment, a string or another
+# bracket there, and a `]` inside one of those would end the list early for a rule that looked for
+# the first `]`. So none of them may appear: the list must be readable to its end as plain words.
+ATTRIBUTE_BODY = re.compile(r"[\w.'\s,←↓]*")
 GOAL_ERRORS = (AssertionError, KeyError, OSError, tomllib.TOMLDecodeError)
 sha = lambda b: hashlib.sha256(b).hexdigest()
 
@@ -278,9 +287,15 @@ def runs_code(text):
     for what, pattern in RUNS_CODE:
         m = re.search(pattern, text)
         if m: found.append((m.start(), what, m.group(0)))
-    for a in ATTRIBUTE.finditer(text):
-        m = CODE_ATTRIBUTE.search(a.group(1))
-        if m: found.append((a.start(1) + m.start(), "an attribute that installs code", m.group(0)))
+    for a in ATTRIBUTE_OPEN.finditer(text):
+        end = ATTRIBUTE_BODY.match(text, a.end()).end()
+        if end >= len(text) or text[end] != "]":
+            found.append((a.start(), "an attribute list that cannot be read to its end as plain words", text[a.start():end + 1].split("\n")[0][:40])); continue
+        for entry in text[a.end():end].split(","):
+            words = entry.split()
+            while words and words[0] in ("local", "scoped"): words = words[1:]
+            if not words or words[0] not in ALLOWED_ATTRIBUTES:
+                found.append((a.start(), "an attribute that is not among those an answer may use", words[0] if words else "@[")); break
     if not found: return None
     at, what, piece = min(found)
     return what, piece, text.count("\n", 0, at) + 1
@@ -482,7 +497,12 @@ def main():
         if e.get("needs_limits") and not CGROUP: print("skip  corpus %-39s it tests a limit this machine does not set" % e["file"], flush=True); continue
         raw = open(os.path.join(base, e["file"]), "rb").read()
         one("corpus " + e["file"], e["problem"], e["kind"], raw, (e["outcome"], e["reason_code"]), budget=e.get("budget", 900), isolate=bool(e.get("isolate")), screen_code=e.get("screen", True), headroom=e.get("disk_headroom"))
-        if e.get("marker"): ran("       with the screen off", e["problem"], e["kind"], raw, e["marker"], e.get("then_build"))
+        if e.get("gap"):
+            # A file the screen is known to let through. Its own run above, with the screen on, must have left its marker.
+            mark = os.path.join(goal, e["marker"]); left = os.path.exists(mark)
+            say(left, "       it ran code with the screen ON", "a gap" if left else "no mark", "known", 0.0, "" if left else "it left no %s: the gap may be closed, and this entry out of date" % e["marker"])
+            if left: os.unlink(mark)
+        elif e.get("marker"): ran("       with the screen off", e["problem"], e["kind"], raw, e["marker"], e.get("then_build"))
     ok, after = controls(after=True); shutil.rmtree(work, ignore_errors=True)
     if not ok: sys.exit("the judge stopped working on this machine during the corpus: %s" % json.dumps(after))
     print("%d wrong" % wrong); sys.exit(1 if wrong else 0)
