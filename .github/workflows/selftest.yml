@@ -100,5 +100,14 @@ jobs:
           bash fixtures/mathlib-goal/tools/build.sh
           test -e fixtures/mathlib-goal/.lake/build/lib/lean/Fixture/Statements.olean
           test ! -e fixtures/mathlib-goal/.lake/build/lib/lean/Proofs
+      - name: A goal's own build script judges one answer, in a sandbox and a build directory of its own
+        # This is how a goal's self-check judges each answer: with the goal and its dependencies
+        # read-only, so that no answer is judged in a directory another answer's build could write.
+        run: |
+          set -euo pipefail
+          printf '%s' '{"challenge_module": "Problems.sqrt_two_irrational", "solution_module": "Proofs.sqrt_two_irrational", "theorem_names": ["Fixture.sqrt_two_irrational"], "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]}' > "$RUNNER_TEMP/judge.json"
+          bash fixtures/mathlib-goal/tools/build.sh --judge "$RUNNER_TEMP/judge.json" 2>&1 | tee "$RUNNER_TEMP/judge.out" | tail -20
+          grep -q "Your solution is okay!" "$RUNNER_TEMP/judge.out"
+          test ! -e fixtures/mathlib-goal/.lake/build/lib/lean/Proofs
       - name: The honest answer accepted, the dishonest ones refused
         run: python3 judge/judge.py corpus --goal fixtures/mathlib-goal --corpus fixtures/mathlib-corpus/corpus.json
