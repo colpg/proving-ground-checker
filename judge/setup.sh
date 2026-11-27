@@ -25,7 +25,8 @@ echo "${want}  $tmp/lean.tar.zst" | sha256sum -c -
 # Outside the home directory: the judge's sandbox hides home directories.
 sudo mkdir -p "/opt/lean-${version}"
 sudo tar --zstd -xf "$tmp/lean.tar.zst" -C "/opt/lean-${version}" --strip-components=1
-sudo apt-get update -qq
+# The machine lists package sources that have nothing to do with us, and one of them failing must not fail this.
+sudo apt-get update -qq || echo "apt-get update reported errors; installing anyway"
 sudo apt-get install -y -qq bubblewrap
 echo "/opt/lean-${version}/bin" >> "$GITHUB_PATH"
 
