@@ -2,8 +2,13 @@
 #
 # 1. A judge that cannot start must read as a FAULT, never as a rejection.
 # 2. With the sandbox working, both controls must behave, every honest answer in the goal template
-#    must be accepted, and every dishonest file in corpus/ must draw the finding the corpus names.
+#    must be accepted, and every file in corpus/ must draw the finding the corpus names. Each answer
+#    goes through the three steps the check workflow runs as three jobs: the challenge is built and
+#    exported with no answer present, the answer is built and exported in the sandbox, and the
+#    judge then sees only the two exports.
 # 3. The same for a goal that needs Mathlib: its dependencies and their build cache come first.
+# 4. How the judge's output is read, on the judge's own wording, for the readings that cannot be
+#    produced on demand.
 name: selftest
 
 on:
@@ -55,10 +60,10 @@ jobs:
           test "$(git -C goal rev-parse HEAD)" = "$TEMPLATE_COMMIT"
       - name: Install the goal's Lean release and let the sandbox start
         run: bash judge/setup.sh goal
-      - name: Honest answers accepted, dishonest ones refused as the corpus says
+      - name: Honest answers accepted, and every corpus file read as the corpus says
         run: python3 judge/judge.py corpus --goal goal --corpus corpus/corpus.json
 
-      - name: How the judge's output is read, including a disagreement among its checkers
+      - name: How the judge's output is read, and that added text never changes a reading
         run: python3 judge/test_classify.py
 
   mathlib:
@@ -75,5 +80,5 @@ jobs:
         run: cd fixtures/mathlib-goal && lake update
       - name: Bring in the dependencies and their build cache
         run: bash judge/deps.sh fixtures/mathlib-goal
-      - name: The honest answer accepted, the dishonest one refused
+      - name: The honest answer accepted, the dishonest ones refused
         run: python3 judge/judge.py corpus --goal fixtures/mathlib-goal --corpus fixtures/mathlib-corpus/corpus.json

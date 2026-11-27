@@ -112,6 +112,49 @@
    "outcome": "rejected",
    "reason_code": "checker_rejected",
    "what": "A theorem added to the environment with Lean's own check switched off. It builds, and the judge's checkers refuse it."
+  },
+  {
+   "file": "prints_judge_wording.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "checker_rejected",
+   "what": "The bogus proof of skips_the_kernel.lean, printing every line the judge prints for an answer all its checkers accept. Its text must change nothing."
+  },
+  {
+   "file": "honest_but_loud.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "accepted",
+   "reason_code": "accepted",
+   "what": "An honest proof that prints the judge's refusals while it builds. Its text must change nothing either."
+  },
+  {
+   "file": "never_finishes.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "timeout",
+   "budget": 60,
+   "what": "An answer that never finishes building. A rejection that counts, not a fault."
+  },
+  {
+   "file": "writes_into_build.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "export_failed",
+   "isolate": true,
+   "what": "An honest proof that, while it builds, replaces a compiled file of the goal's library with junk."
+  },
+  {
+   "file": "sandbox_probe.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "accepted",
+   "reason_code": "accepted",
+   "needs_sandbox": true,
+   "what": "An honest proof that refuses to build unless it is inside the sandbox: no network, a read-only project, a home that is not the machine's, a process space of its own."
   }
  ]
 }

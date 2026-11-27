@@ -1,13 +1,22 @@
-# Judges ONE answer to one problem of one goal, on a machine that is thrown away afterwards.
+# Judges ONE answer to one problem of one goal, in three jobs on three machines that are thrown
+# away afterwards.
 #
-# Started only by workflow_dispatch on the default branch, never by a pull request: so the workflow
-# and the judge that run are the ones on the default branch. Every input is an identifier, a hash or
-# an address. Each is matched against a pattern before it is used, and none is ever interpolated
-# into a command: they travel as environment variables. The answer itself is fetched by address and
-# compared with its hash; it is data until the judge's sandbox builds it.
+#   challenge   is given the goal and never the answer. It builds the challenge and exports it.
+#               The export's SHA-256 is the problem's fingerprint, and leaves as a job output.
+#   answer      is given the goal and the answer. It builds the answer inside a sandbox with no
+#               network and exports it. It is the only job that runs submitted code, and nothing
+#               it says in the answer's favour is believed.
+#   verdict     is given the two exports and nothing to build. It runs Lean's judge on them, and
+#               writes verdict.json, the run's one result.
 #
-# The job holds no secret and its token can only read this repository. Its one result is the file
-# verdict.json, uploaded as the artifact `verdict`.
+# Started only by workflow_dispatch, never by a pull request, so the workflow and the judge that
+# run are those of the ref it was dispatched on. Every input is an identifier, a hash, an address
+# or a number. Each is matched against a pattern before it is used, and none is ever interpolated
+# into a command: they travel as environment variables. The answer itself is fetched by address
+# and compared with its hash; it is data until the sandbox builds it.
+#
+# No job holds a secret, and the token can only read this repository. Every action is pinned by
+# its full commit hash.
 name: check
 run-name: check ${{ inputs.submission }}
 
@@ -43,6 +52,11 @@ on:
         description: The SHA-256 of the answer, 64 hex digits
         required: true
         type: string
+      budget_seconds:
+        description: Seconds the answer may take to build, and again to be checked (60 to 1500)
+        required: false
+        default: "900"
+        type: string
 
 permissions:
   contents: read
@@ -51,68 +65,123 @@ concurrency:
   group: check-${{ inputs.submission }}
   cancel-in-progress: false
 
+env:
+  SUBMISSION: ${{ inputs.submission }}
+  PG_GOAL_REPOSITORY: ${{ inputs.goal_repository }}
+  PG_GOAL_COMMIT: ${{ inputs.goal_commit }}
+  PROBLEM: ${{ inputs.problem }}
+  ANSWER_KIND: ${{ inputs.answer_kind }}
+  ANSWER_URL: ${{ inputs.answer_url }}
+  ANSWER_SHA256: ${{ inputs.answer_sha256 }}
+  BUDGET: ${{ inputs.budget_seconds }}
+
 jobs:
-  check:
+  challenge:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    env:
-      SUBMISSION: ${{ inputs.submission }}
-      PG_GOAL_REPOSITORY: ${{ inputs.goal_repository }}
-      PG_GOAL_COMMIT: ${{ inputs.goal_commit }}
-      PROBLEM: ${{ inputs.problem }}
-      ANSWER_KIND: ${{ inputs.answer_kind }}
-      ANSWER_URL: ${{ inputs.answer_url }}
-      ANSWER_SHA256: ${{ inputs.answer_sha256 }}
+    outputs:
+      fingerprint: ${{ steps.make.outputs.fingerprint }}
+      plan: ${{ steps.make.outputs.plan }}
+      toolchain: ${{ steps.make.outputs.toolchain }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-
       - name: Match every input against its pattern
-        run: |
-          set -euo pipefail
-          [[ "$SUBMISSION" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || { echo "submission"; exit 2; }
-          [[ "$PG_GOAL_REPOSITORY" =~ ^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$ ]] || { echo "goal_repository"; exit 2; }
-          [[ "$PG_GOAL_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "goal_commit"; exit 2; }
-          [[ "$PROBLEM" =~ ^[a-z][a-z0-9_]{0,62}$ ]] || { echo "problem"; exit 2; }
-          [[ "$ANSWER_KIND" =~ ^(proof|refutation|cut)$ ]] || { echo "answer_kind"; exit 2; }
-          [[ "$ANSWER_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "answer_sha256"; exit 2; }
-          python3 - <<'EOF'
-          import os, sys, urllib.parse
-          u = urllib.parse.urlsplit(os.environ["ANSWER_URL"])
-          hosts = [l.strip() for l in open("allowed-answer-hosts.txt") if l.strip() and not l.startswith("#")]
-          ok = u.scheme == "https" and u.hostname in hosts and not u.username and u.port in (None, 443) and len(os.environ["ANSWER_URL"]) <= 500
-          sys.exit(0 if ok else "answer_url is not an https address on an allowed host")
-          EOF
-
+        run: bash judge/inputs.sh
       - name: Fetch the goal at its commit
-        run: |
-          set -euo pipefail
-          git init -q goal
-          git -C goal fetch -q --depth 1 "https://github.com/${PG_GOAL_REPOSITORY}.git" "$PG_GOAL_COMMIT"
-          git -C goal checkout -q FETCH_HEAD
-          test "$(git -C goal rev-parse HEAD)" = "$PG_GOAL_COMMIT"
-
+        run: bash judge/fetch_goal.sh
       - name: Install the goal's Lean release and let the sandbox start
         run: bash judge/setup.sh goal
-
       - name: Bring in the goal's dependencies and their build cache
         run: bash judge/deps.sh goal
+      - name: Build the challenge and export it
+        id: make
+        run: python3 judge/judge.py challenge --goal goal --problem "$PROBLEM" --kind "$ANSWER_KIND" --out "$RUNNER_TEMP/challenge"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: challenge
+          path: ${{ runner.temp }}/challenge/challenge.ndjson
+          if-no-files-found: error
+          retention-days: 1
 
+  answer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Match every input against its pattern
+        run: bash judge/inputs.sh
+      - name: Fetch the goal at its commit
+        run: bash judge/fetch_goal.sh
+      - name: Install the goal's Lean release and let the sandbox start
+        run: bash judge/setup.sh goal
+      - name: Bring in the goal's dependencies and their build cache
+        run: bash judge/deps.sh goal
       - name: Fetch the answer
         run: |
           set -euo pipefail
           curl -sSf --proto '=https' --max-redirs 0 --max-filesize 262144 --max-time 60 "$ANSWER_URL" -o "$RUNNER_TEMP/answer.lean"
           sha256sum "$RUNNER_TEMP/answer.lean"
-
-      - name: Run the controls, then judge the answer
+      - name: Run the controls, build the answer in the sandbox, export it, run a control again
         run: |
           python3 judge/judge.py answer --goal goal --problem "$PROBLEM" --kind "$ANSWER_KIND" \
-            --answer "$RUNNER_TEMP/answer.lean" --answer-sha256 "$ANSWER_SHA256" --submission "$SUBMISSION" > verdict.json
-          python3 -c "import json; v = json.load(open('verdict.json')); print(v['outcome'], v['reason_code'], '|', v.get('message', ''))"
+            --answer "$RUNNER_TEMP/answer.lean" --answer-sha256 "$ANSWER_SHA256" --budget "$BUDGET" --out "$RUNNER_TEMP/answer"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: answer
+          path: ${{ runner.temp }}/answer
+          if-no-files-found: error
+          retention-days: 1
 
+  verdict:
+    needs: [challenge, answer]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # These three come from the challenge job as job outputs, not through the artifact store,
+      # which a job that ran the answer could reach.
+      FINGERPRINT: ${{ needs.challenge.outputs.fingerprint }}
+      PLAN: ${{ needs.challenge.outputs.plan }}
+      TOOLCHAIN: ${{ needs.challenge.outputs.toolchain }}
+      JOBS: challenge=${{ needs.challenge.result }},answer=${{ needs.answer.result }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Match every input against its pattern
+        run: bash judge/inputs.sh
+      - name: Install the Lean release the challenge job used, and let the sandbox start
+        if: ${{ needs.challenge.result == 'success' }}
+        run: bash judge/setup.sh "$TOOLCHAIN"
+      - name: Fetch the challenge's export
+        if: ${{ needs.challenge.result == 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: challenge
+          path: ${{ runner.temp }}/challenge
+      - name: Fetch the answer job's report and export
+        if: ${{ needs.answer.result == 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: answer
+          path: ${{ runner.temp }}/answer
+      - name: Run the controls, judge the two exports, run a control again
+        run: |
+          set -euo pipefail
+          printf '%s' "$PLAN" > "$RUNNER_TEMP/plan.json"
+          python3 judge/judge.py verdict --plan "$RUNNER_TEMP/plan.json" --fingerprint "$FINGERPRINT" \
+            --challenge "$RUNNER_TEMP/challenge/challenge.ndjson" --answer-dir "$RUNNER_TEMP/answer" \
+            --jobs "$JOBS" --submission "$SUBMISSION" --answer-sha256 "$ANSWER_SHA256" --budget "$BUDGET" > verdict.json
+          python3 -c "import json; v = json.load(open('verdict.json')); print(v['outcome'], v['reason_code'], '|', v.get('message', ''))"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verdict
           path: verdict.json
+          if-no-files-found: error
           retention-days: 30
