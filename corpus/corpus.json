@@ -104,6 +104,14 @@
    "outcome": "rejected",
    "reason_code": "hidden_characters",
    "what": "A direction-changing character in a comment. The form screen stops it."
+  },
+  {
+   "file": "skips_the_kernel.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "checker_rejected",
+   "what": "A theorem added to the environment with Lean's own check switched off. It builds, and the judge's checkers refuse it."
   }
  ]
 }

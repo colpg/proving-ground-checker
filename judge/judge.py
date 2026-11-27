@@ -60,6 +60,12 @@ def classify(rc, out, challenge, solution, theorem):
         for code, text in REFUSALS:
             hit = [l for l in lines if text in l]
             if hit: return "rejected", code, hit[0][:300]
+        # The answer built, and then one or more of the judge's checkers refused the proof itself.
+        said = lambda word: [m.group(1) for l in lines for m in [re.fullmatch(r"(.+) kernel %s the solution" % word, l)] if m]
+        refused, passed = said("rejected"), said("accepts")
+        if refused:
+            if passed: return "rejected", "checkers_disagree", ("rejected by %s; accepted by %s" % (", ".join(refused), ", ".join(passed)))[:300]
+            return "rejected", "checker_rejected", ("rejected by every checker that ran: %s" % ", ".join(refused))[:300]
         # The answer built but does not hold the theorem: the judge's exporter says so and stops.
         if ("Constant %s not found in environment" % theorem) in out and out.count("Build completed successfully") >= 2:
             return "rejected", "theorem_missing", "the answer does not declare %s" % theorem
@@ -160,7 +166,7 @@ def main():
     goal = os.path.abspath(A.goal)
     if A.cmd == "answer":
         raw = open(A.answer, "rb").read()
-        env = {v: os.environ.get(e) for v, e in (("repository", "GITHUB_REPOSITORY"), ("sha", "GITHUB_SHA"), ("run_id", "GITHUB_RUN_ID"), ("run_attempt", "GITHUB_RUN_ATTEMPT"), ("workflow_ref", "GITHUB_WORKFLOW_REF"), ("event", "GITHUB_EVENT_NAME"))}
+        env = {v: os.environ.get(e) for v, e in (("repository", "GITHUB_REPOSITORY"), ("sha", "GITHUB_SHA"), ("run_id", "GITHUB_RUN_ID"), ("run_attempt", "GITHUB_RUN_ATTEMPT"), ("workflow_ref", "GITHUB_WORKFLOW_REF"), ("event", "GITHUB_EVENT_NAME"), ("actor", "GITHUB_ACTOR"), ("triggering_actor", "GITHUB_TRIGGERING_ACTOR"))}
         v = {"kind": "proving-ground.verdict.v1", "submission": A.submission, "checker": env,
              "goal": {"repository": os.environ.get("PG_GOAL_REPOSITORY"), "commit": os.environ.get("PG_GOAL_COMMIT")},
              "judge": {"tool": "lake comparator --paranoid", "lean": subprocess.run(["lean", "--version"], capture_output=True, text=True).stdout.strip(), "sandbox_route": os.environ.get("PG_SANDBOX_ROUTE")}}
@@ -185,7 +191,7 @@ def main():
     for f in sorted(os.listdir(os.path.join(goal, "Proofs"))):
         pid = f[:-5]; kind = "refutation" if pid.endswith("_neg") else "proof"; pid = pid[:-4] if kind == "refutation" else pid
         row("honest %s of %s" % (kind, pid), judge_answer(goal, pid, kind, open(os.path.join(goal, "Proofs", f), "rb").read(), restore=True), ("accepted", "accepted"))
-    for f in sorted(os.listdir(os.path.join(goal, "Cuts"))):
+    for f in sorted(os.listdir(os.path.join(goal, "Cuts"))) if os.path.isdir(os.path.join(goal, "Cuts")) else []:
         row("honest cut %s" % f[:-5], judge_answer(goal, f[:-5], "cut", open(os.path.join(goal, "Cuts", f), "rb").read(), restore=True), ("accepted", "accepted"))
     C = json.load(open(A.corpus, encoding="utf-8")); base = os.path.dirname(os.path.abspath(A.corpus))
     for e in C["answers"]:

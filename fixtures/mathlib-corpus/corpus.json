@@ -1,0 +1,21 @@
+{
+ "goal": "fixtures/mathlib-goal",
+ "answers": [
+  {
+   "file": "sorry.lean",
+   "problem": "sqrt_two_irrational",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "illegal_axiom",
+   "what": "A proof that is `sorry`, in a goal that needs Mathlib."
+  },
+  {
+   "file": "skips_the_kernel.lean",
+   "problem": "sqrt_two_irrational",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "checker_rejected",
+   "what": "A theorem added with Lean's own check switched off, using only what Mathlib brings with it. It builds, and the judge's checkers refuse it."
+  }
+ ]
+}

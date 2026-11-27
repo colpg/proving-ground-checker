@@ -1,0 +1,18 @@
+name = "mathlib_fixture"
+defaultTargets = ["Fixture"]
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.36.0"
+
+[[lean_lib]]
+name = "Fixture"
+
+[[lean_lib]]
+name = "Problems"
+globs = ["Problems.+"]
+
+[[lean_lib]]
+name = "Proofs"
+globs = ["Proofs.+"]

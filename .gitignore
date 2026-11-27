@@ -1,4 +1,5 @@
 .lake/
+fixtures/mathlib-goal/lake-manifest.json
 goal/
 verdict.json
 *.log

@@ -1,0 +1,7 @@
+title = "Fixture: one problem that needs Mathlib"
+licence = "MIT"
+statements = "Fixture.Statements"
+roots = ["sqrt_two_irrational"]
+permitted_axioms = ["propext", "Quot.sound", "Classical.choice"]
+may_import = ["Fixture", "Mathlib"]
+report_to = ""

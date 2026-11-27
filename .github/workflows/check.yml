@@ -96,6 +96,9 @@ jobs:
       - name: Install the goal's Lean release and let the sandbox start
         run: bash judge/setup.sh goal
 
+      - name: Bring in the goal's dependencies and their build cache
+        run: bash judge/deps.sh goal
+
       - name: Fetch the answer
         run: |
           set -euo pipefail
