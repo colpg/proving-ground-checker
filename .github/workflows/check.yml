@@ -7,7 +7,13 @@
 #               network and exports it. It is the only job that runs submitted code, and nothing
 #               it says in the answer's favour is believed.
 #   verdict     is given the two exports and nothing to build. It runs Lean's judge on them, and
-#               writes verdict.json, the run's one result.
+#               writes verdict.json, the run's one result, with a token that vouches for it.
+#
+# Every job of a run can write the run's store of files, so a file's name proves nothing about who
+# wrote it. Two things answer that. The challenge's hash reaches the verdict job as a job output,
+# not through the store. And the verdict job alone may ask GitHub for an identity token; it asks
+# for one whose audience is the SHA-256 of verdict.json, and hands it on as verdict.jwt. A consumer
+# checks that token before it believes the verdict (judge/verify_token.py).
 #
 # Started only by workflow_dispatch, never by a pull request, so the workflow and the judge that
 # run are those of the ref it was dispatched on. Every input is an identifier, a hash, an address
@@ -16,7 +22,8 @@
 # and compared with its hash; it is data until the sandbox builds it.
 #
 # No job holds a secret, and the token can only read this repository. Every action is pinned by
-# its full commit hash.
+# its full commit hash. Each job's time limit is above the sum of the limits inside it, so that an
+# answer cannot run a job into its limit and turn a rejection into a fault.
 name: check
 run-name: check ${{ inputs.submission }}
 
@@ -78,7 +85,7 @@ env:
 jobs:
   challenge:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     outputs:
       fingerprint: ${{ steps.make.outputs.fingerprint }}
       plan: ${{ steps.make.outputs.plan }}
@@ -92,8 +99,10 @@ jobs:
       - name: Fetch the goal at its commit
         run: bash judge/fetch_goal.sh
       - name: Install the goal's Lean release and let the sandbox start
+        timeout-minutes: 8
         run: bash judge/setup.sh goal
-      - name: Bring in the goal's dependencies and their build cache
+      - name: Check the goal's dependencies against the allow-list, then bring them in with their build cache
+        timeout-minutes: 15
         run: bash judge/deps.sh goal
       - name: Build the challenge and export it
         id: make
@@ -103,11 +112,12 @@ jobs:
           name: challenge
           path: ${{ runner.temp }}/challenge/challenge.ndjson
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
 
   answer:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -117,8 +127,10 @@ jobs:
       - name: Fetch the goal at its commit
         run: bash judge/fetch_goal.sh
       - name: Install the goal's Lean release and let the sandbox start
+        timeout-minutes: 8
         run: bash judge/setup.sh goal
-      - name: Bring in the goal's dependencies and their build cache
+      - name: Check the goal's dependencies against the allow-list, then bring them in with their build cache
+        timeout-minutes: 15
         run: bash judge/deps.sh goal
       - name: Fetch the answer
         run: |
@@ -140,7 +152,11 @@ jobs:
     needs: [challenge, answer]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
+    # The only job that may ask GitHub for an identity token.
+    permissions:
+      contents: read
+      id-token: write
     env:
       # These three come from the challenge job as job outputs, not through the artifact store,
       # which a job that ran the answer could reach.
@@ -156,6 +172,7 @@ jobs:
         run: bash judge/inputs.sh
       - name: Install the Lean release the challenge job used, and let the sandbox start
         if: ${{ needs.challenge.result == 'success' }}
+        timeout-minutes: 8
         run: bash judge/setup.sh "$TOOLCHAIN"
       - name: Fetch the challenge's export
         if: ${{ needs.challenge.result == 'success' }}
@@ -179,9 +196,20 @@ jobs:
             --challenge "$RUNNER_TEMP/challenge/challenge.ndjson" --answer-dir "$RUNNER_TEMP/answer" \
             --jobs "$JOBS" --submission "$SUBMISSION" --answer-sha256 "$ANSWER_SHA256" --budget "$BUDGET" > verdict.json
           python3 -c "import json; v = json.load(open('verdict.json')); print(v['outcome'], v['reason_code'], '|', v.get('message', ''))"
+      - name: Ask GitHub for a token bound to this verdict
+        run: |
+          set -euo pipefail
+          hash="$(sha256sum verdict.json | cut -d' ' -f1)"
+          curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=proving-ground-verdict:sha256:${hash}" \
+            | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["value"])' > verdict.jwt
+          test -s verdict.jwt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verdict
-          path: verdict.json
+          path: |
+            verdict.json
+            verdict.jwt
           if-no-files-found: error
+          # It replaces anything another job put there under this name.
+          overwrite: true
           retention-days: 30

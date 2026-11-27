@@ -1,0 +1,204 @@
+# One run of the check's three jobs with a dishonest job in the answer's place. Called by lies.yml,
+# once for each lie. See judge/lie.py for the lies and for what each must lead to.
+#
+# The `challenge` and `verdict` jobs do what check.yml's do, step for step, on a pinned commit of
+# the goal template. Only the names of the files they hand on differ: each carries the lie's name,
+# because every call in one run shares one store of files. The `liar` job stands where the answer
+# job stands, with the same permissions: it can read this repository and write the run's files,
+# and it cannot ask for an identity token. The `colony` job plays the consumer of verdicts.
+name: lie-run
+
+on:
+  workflow_call:
+    inputs:
+      lie:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  LIE: ${{ inputs.lie }}
+  SUBMISSION: lie-${{ inputs.lie }}
+  PG_GOAL_REPOSITORY: colpg/proving-ground-goal-template
+  PG_GOAL_COMMIT: 7308cdb5edf6bc8b4b83048a9ea01c6b1223547c
+  PROBLEM: xor2_le_4
+  ANSWER_KIND: proof
+  BUDGET: "300"
+
+jobs:
+  challenge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      fingerprint: ${{ steps.make.outputs.fingerprint }}
+      plan: ${{ steps.make.outputs.plan }}
+      toolchain: ${{ steps.make.outputs.toolchain }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Fetch the goal at its commit
+        run: bash judge/fetch_goal.sh
+      - name: Install the goal's Lean release and let the sandbox start
+        run: bash judge/setup.sh goal
+      - name: Check the goal's dependencies against the allow-list, then bring them in with their build cache
+        run: bash judge/deps.sh goal
+      - name: Build the challenge and export it
+        id: make
+        run: python3 judge/judge.py challenge --goal goal --problem "$PROBLEM" --kind "$ANSWER_KIND" --out "$RUNNER_TEMP/challenge"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: challenge-${{ inputs.lie }}
+          path: ${{ runner.temp }}/challenge/challenge.ndjson
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  liar:
+    # After the challenge job, so that what it puts in the store is there when the verdict job looks.
+    needs: challenge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      answer_sha256: ${{ steps.make.outputs.answer_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Fetch the goal at its commit
+        run: bash judge/fetch_goal.sh
+      - name: Install the goal's Lean release and let the sandbox start
+        run: bash judge/setup.sh goal
+      - name: Make what this lie hands on
+        id: make
+        run: python3 judge/lie.py make "$LIE" --goal goal --out "$RUNNER_TEMP/lie"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: answer-${{ inputs.lie }}
+          path: ${{ runner.temp }}/lie/answer
+          if-no-files-found: error
+          retention-days: 1
+      - name: "The lie: replace the challenge's export in the store"
+        if: ${{ inputs.lie == 'overwrites-challenge' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: challenge-${{ inputs.lie }}
+          path: ${{ runner.temp }}/lie/forged/challenge.ndjson
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+      - name: Write an accepting verdict
+        if: ${{ inputs.lie == 'plants-verdict-before' }}
+        run: python3 judge/lie.py plant --out "$RUNNER_TEMP/planted" --submission "$SUBMISSION" && echo "not a token" > "$RUNNER_TEMP/planted/verdict.jwt"
+      - name: "The lie: put an accepting verdict in the store before the verdict job runs"
+        if: ${{ inputs.lie == 'plants-verdict-before' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verdict-${{ inputs.lie }}
+          path: ${{ runner.temp }}/planted
+          if-no-files-found: error
+          retention-days: 1
+
+  verdict:
+    needs: [challenge, liar]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      FINGERPRINT: ${{ needs.challenge.outputs.fingerprint }}
+      PLAN: ${{ needs.challenge.outputs.plan }}
+      TOOLCHAIN: ${{ needs.challenge.outputs.toolchain }}
+      ANSWER_SHA256: ${{ needs.liar.outputs.answer_sha256 }}
+      JOBS: challenge=${{ needs.challenge.result }},answer=${{ needs.liar.result }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install the Lean release the challenge job used, and let the sandbox start
+        if: ${{ needs.challenge.result == 'success' }}
+        run: bash judge/setup.sh "$TOOLCHAIN"
+      - name: Fetch the challenge's export
+        if: ${{ needs.challenge.result == 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: challenge-${{ inputs.lie }}
+          path: ${{ runner.temp }}/challenge
+      - name: Fetch the answer job's report and export
+        if: ${{ needs.liar.result == 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: answer-${{ inputs.lie }}
+          path: ${{ runner.temp }}/answer
+      - name: Run the controls, judge the two exports, run a control again
+        run: |
+          set -euo pipefail
+          printf '%s' "$PLAN" > "$RUNNER_TEMP/plan.json"
+          python3 judge/judge.py verdict --plan "$RUNNER_TEMP/plan.json" --fingerprint "$FINGERPRINT" \
+            --challenge "$RUNNER_TEMP/challenge/challenge.ndjson" --answer-dir "$RUNNER_TEMP/answer" \
+            --jobs "$JOBS" --submission "$SUBMISSION" --answer-sha256 "$ANSWER_SHA256" --budget "$BUDGET" > verdict.json
+          python3 -c "import json; v = json.load(open('verdict.json')); print(v['outcome'], v['reason_code'], '|', v.get('message', ''))"
+      - name: Ask GitHub for a token bound to this verdict
+        run: |
+          set -euo pipefail
+          hash="$(sha256sum verdict.json | cut -d' ' -f1)"
+          curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=proving-ground-verdict:sha256:${hash}" \
+            | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["value"])' > verdict.jwt
+          test -s verdict.jwt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verdict-${{ inputs.lie }}
+          path: |
+            verdict.json
+            verdict.jwt
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  late-liar:
+    needs: verdict
+    if: ${{ inputs.lie == 'plants-verdict-after' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Take the real verdict and its token from the store
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verdict-${{ inputs.lie }}
+          path: ${{ runner.temp }}/verdict
+      - name: Keep the real token, and write an accepting verdict beside it
+        run: python3 judge/lie.py plant --out "$RUNNER_TEMP/verdict" --submission "$SUBMISSION"
+      - name: "The lie: replace the verdict in the store after the verdict job has run"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verdict-${{ inputs.lie }}
+          path: ${{ runner.temp }}/verdict
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  colony:
+    needs: [verdict, late-liar]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Fetch the verdict as a consumer would
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verdict-${{ inputs.lie }}
+          path: ${{ runner.temp }}/verdict
+      - name: Check the token, and that the run ended as this lie must end
+        run: python3 judge/lie.py expect "$LIE" --verdict-dir "$RUNNER_TEMP/verdict"

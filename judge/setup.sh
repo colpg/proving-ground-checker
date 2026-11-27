@@ -8,6 +8,7 @@
 #   profile    an AppArmor profile for the one executable, bwrap
 #   setting    the system-wide setting relaxed (the broad fix, used only if the narrow one fails)
 #   untouched  PG_SKIP_SANDBOX_FIX=1 was set: nothing was tried (the self-test uses this)
+# It also makes a control group with a limit on memory and on processes, and names it in PG_CGROUP.
 # Meant for a GitHub-hosted machine that is thrown away. It uses sudo and changes the system.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -47,3 +48,15 @@ fi
 echo "Lean ${version} installed; sandbox route: ${route}"
 echo "PG_SANDBOX_ROUTE=${route}" >> "$GITHUB_ENV"
 [ "$route" != broken ] || { echo "the sandbox cannot start on this machine"; exit 1; }
+
+# A control group for what is built and checked from an answer, so that an answer cannot take all
+# of the machine's memory or fill its process table. judge.py puts each such command into it.
+if [ "$route" != untouched ]; then
+  cg=/sys/fs/cgroup/pg-answer
+  sudo mkdir -p "$cg"
+  echo "${PG_MEMORY_MAX:-10G}" | sudo tee "$cg/memory.max" > /dev/null
+  echo "${PG_PIDS_MAX:-4096}" | sudo tee "$cg/pids.max" > /dev/null
+  echo 0 | sudo tee "$cg/memory.swap.max" > /dev/null 2>&1 || true
+  echo "control group ${cg}: memory $(cat "$cg/memory.max"), processes $(cat "$cg/pids.max")"
+  echo "PG_CGROUP=${cg}" >> "$GITHUB_ENV"
+fi

@@ -7,10 +7,16 @@
 # A goal with dependencies must describe its build in lakefile.toml, which is declarative. A
 # lakefile.lean is code, and it would run here, outside the judge's sandbox.
 #
+# The dependencies' own build files do run here. So every package the goal pins must be on the
+# allow-list in allowed-dependencies.json, by address and by revision, and that is checked first.
+#
 # Uses the network. Writes inside the goal directory only.
 set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
 goal="${1:?a goal directory}"
 [ -f "$goal/lake-manifest.json" ] || { echo "the goal has no lake-manifest.json"; exit 2; }
+# Before any `lake` command: every dependency must be on the allow-list, at a revision it names.
+python3 "$HERE/deps_check.py" "$goal"
 n="$(python3 -c 'import json, sys; print(len(json.load(open(sys.argv[1])).get("packages", [])))' "$goal/lake-manifest.json")"
 if [ "$n" = "0" ]; then echo "the goal has no dependencies"; exit 0; fi
 [ ! -e "$goal/lakefile.lean" ] || { echo "a goal with dependencies must use lakefile.toml, not lakefile.lean"; exit 2; }

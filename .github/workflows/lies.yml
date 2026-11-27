@@ -1,0 +1,37 @@
+# What a check does when the job that runs the answer lies. On every pull request and push.
+#
+# The answer job is the one job that runs submitted code, so nothing may rest on its word: code
+# that escaped its sandbox, or a dependency's build files, could make it say anything, and could
+# write anything into the run's store of files. Each lie here is one such thing. For each, a real
+# challenge job and a real verdict job run around a dishonest job in the answer's place, and a last
+# job plays the consumer of verdicts and checks how the run ended (judge/lie.py).
+#
+# This tests the mechanism on a copy of check.yml's wiring, not check.yml itself, which has no
+# switch to make its answer job lie and should not have one.
+name: lies
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lies-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    strategy:
+      fail-fast: false
+      matrix:
+        lie: [honest, forged-export, forged-fault, overwrites-challenge, plants-verdict-before, plants-verdict-after]
+    uses: ./.github/workflows/lie-run.yml
+    with:
+      lie: ${{ matrix.lie }}
+    permissions:
+      contents: read
+      id-token: write
