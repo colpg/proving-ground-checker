@@ -8,10 +8,10 @@ import Mathlib
 -- Lean's own whose name mentions nothing of the system. Found in review. No list can keep up with
 -- every extension point of every library, so for a goal with dependencies the sandbox is what
 -- holds, and not the screen. The proof at the end is honest, so this file is accepted.
-def ranOracle : Linarith.CertificateOracle where
+def ranOracle : Mathlib.Tactic.Linarith.CertificateOracle where
   produceCertificate hyps n := do
     Lean.writeModule (← Lean.getEnv) ".lake/ran-oracle"
-    Linarith.CertificateOracle.simplexAlgorithmSparse.produceCertificate hyps n
+    Mathlib.Tactic.Linarith.CertificateOracle.simplexAlgorithmSparse.produceCertificate hyps n
 
 example (x : ℚ) (h : 0 < x) : 0 < 2 * x := by linarith (oracle := ranOracle)
 
