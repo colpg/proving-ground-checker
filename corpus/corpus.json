@@ -1,0 +1,109 @@
+{
+ "goal": "TheColonyAI/proving-ground-goal-template",
+ "answers": [
+  {
+   "file": "sorry.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "illegal_axiom",
+   "what": "A proof that is `sorry`."
+  },
+  {
+   "file": "own_axiom.lean",
+   "problem": "size_mono",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "illegal_axiom",
+   "what": "The statement declared as an axiom, then used."
+  },
+  {
+   "file": "weaker_statement.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "statement_mismatch",
+   "what": "A true proof of a weaker statement under the problem's name."
+  },
+  {
+   "file": "redefined.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "definition_mismatch",
+   "what": "The statement's own name redefined as something trivial."
+  },
+  {
+   "file": "other_negation.lean",
+   "problem": "and_eq_or",
+   "kind": "refutation",
+   "outcome": "rejected",
+   "reason_code": "statement_mismatch",
+   "what": "A refutation of a different statement under the refutation's name."
+  },
+  {
+   "file": "cut_with_sorry.lean",
+   "problem": "xor2_le_5_by_mono",
+   "kind": "cut",
+   "outcome": "rejected",
+   "reason_code": "illegal_axiom",
+   "what": "A cut whose implication is `sorry`."
+  },
+  {
+   "file": "uses_outside_sorry.lean",
+   "problem": "outside_easy",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "illegal_axiom",
+   "what": "A proof by the outside theorem itself, which is `sorry` there."
+  },
+  {
+   "file": "does_not_build.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "build_failed",
+   "what": "A proof that Lean does not accept."
+  },
+  {
+   "file": "native_decide.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "illegal_axiom",
+   "what": "A proof by native evaluation, which adds an axiom of its own."
+  },
+  {
+   "file": "closing_via_challenge.lean",
+   "problem": "xor2_le_5",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "illegal_axiom",
+   "what": "A closing proof that imports a child's challenge in place of its proof."
+  },
+  {
+   "file": "wrong_name.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "theorem_missing",
+   "what": "A proof under another name. The form screen stops it."
+  },
+  {
+   "file": "name_only_in_comment.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "theorem_missing",
+   "what": "The problem's name appears only inside a comment, so the screen passes it and the judge must refuse it."
+  },
+  {
+   "file": "hidden_characters.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "hidden_characters",
+   "what": "A direction-changing character in a comment. The form screen stops it."
+  }
+ ]
+}

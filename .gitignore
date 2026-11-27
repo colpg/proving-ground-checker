@@ -1,0 +1,4 @@
+.lake/
+goal/
+verdict.json
+*.log

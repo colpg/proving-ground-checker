@@ -1,0 +1,4 @@
+# Hosts an answer may be fetched from, one per line. https only.
+thecolony.ai
+# For trying the check workflow by hand against a file in a public repository:
+raw.githubusercontent.com

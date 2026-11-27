@@ -1,0 +1,58 @@
+# The checker's own test, on every push and pull request. It holds no secret.
+#
+# 1. A judge that cannot start must read as a FAULT, never as a rejection.
+# 2. With the sandbox working, both controls must behave, every honest answer in the goal template
+#    must be accepted, and every dishonest file in corpus/ must draw the finding the corpus names.
+name: selftest
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The goal the corpus is written against, pinned to a commit.
+  TEMPLATE_REPOSITORY: TheColonyAI/proving-ground-goal-template
+  TEMPLATE_COMMIT: 7308cdb5edf6bc8b4b83048a9ea01c6b1223547c
+
+jobs:
+  broken-sandbox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Lean and the sandbox tool, and fix nothing
+        env:
+          PG_SKIP_SANDBOX_FIX: "1"
+        run: bash judge/setup.sh 4.36.0
+      - name: A judge that cannot start must read as a fault
+        run: python3 judge/judge.py controls --expect-fault
+
+  corpus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch the goal template at its pinned commit
+        run: |
+          set -euo pipefail
+          git init -q goal
+          git -C goal fetch -q --depth 1 "https://github.com/${TEMPLATE_REPOSITORY}.git" "$TEMPLATE_COMMIT"
+          git -C goal checkout -q FETCH_HEAD
+          test "$(git -C goal rev-parse HEAD)" = "$TEMPLATE_COMMIT"
+      - name: Install the goal's Lean release and let the sandbox start
+        run: bash judge/setup.sh goal
+      - name: Honest answers accepted, dishonest ones refused as the corpus says
+        run: python3 judge/judge.py corpus --goal goal --corpus corpus/corpus.json
