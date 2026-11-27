@@ -1,3 +1,3 @@
 A one-problem goal that needs Mathlib, used only by this repository's self-test.
 
-It carries no `lake-manifest.json`: the self-test resolves Mathlib at the tag in `lakefile.toml` when it runs. A real goal commits its manifest.
+It commits its `lake-manifest.json`, as a real goal does. Every package in it is on the allow-list in `allowed-dependencies.json`, and the self-test checks that before any `lake` command runs.

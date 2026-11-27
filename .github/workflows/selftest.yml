@@ -86,10 +86,8 @@ jobs:
           persist-credentials: false
       - name: Install the fixture's Lean release and let the sandbox start
         run: bash judge/setup.sh fixtures/mathlib-goal
-      - name: Resolve Mathlib at the fixture's tag
-        # The fixture carries no manifest; a real goal commits one and skips this step.
-        run: cd fixtures/mathlib-goal && lake update && echo "=== lake-manifest.json" && cat lake-manifest.json
-      - name: Bring in the dependencies and their build cache
+      - name: Check the dependencies against the allow-list, then bring them in with their build cache
+        # The fixture commits its lake-manifest.json, as a real goal does, so the check comes first.
         run: bash judge/deps.sh fixtures/mathlib-goal
       - name: The honest answer accepted, the dishonest ones refused
         run: python3 judge/judge.py corpus --goal fixtures/mathlib-goal --corpus fixtures/mathlib-corpus/corpus.json
