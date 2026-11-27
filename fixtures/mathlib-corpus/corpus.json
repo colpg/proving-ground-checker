@@ -17,6 +17,16 @@
    "reason_code": "checker_rejected",
    "what": "A theorem added with Lean's own check switched off, using only what Mathlib brings with it. It builds, and the judge's checkers refuse it.",
    "screen": false
+  },
+  {
+   "file": "linarith_oracle.lean",
+   "problem": "sqrt_two_irrational",
+   "kind": "proof",
+   "outcome": "accepted",
+   "reason_code": "accepted",
+   "gap": true,
+   "marker": ".lake/ran-oracle",
+   "what": "A KNOWN GAP. An oracle of the file's own handed to `linarith`, which runs it while the file builds. The screen lets it through: a tactic's option is on no list of refused words. The proof beside it is honest, so the file is accepted. What holds here is the sandbox."
   }
  ]
 }
