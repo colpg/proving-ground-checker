@@ -21,12 +21,21 @@ a time budget. It runs three jobs on three machines.
 | --- | --- | --- | --- |
 | `challenge` | The goal. Never the answer | Writes the challenge from the names in the goal's manifests, builds it, and exports it with Lean's own exporter | The export, and its SHA-256 as a job output |
 | `answer` | The goal and the answer | Builds the answer inside a sandbox with no network, within the time budget, and exports it | The export, or the reason there is none |
-| `verdict` | The two exports, and nothing to build | Runs Lean's own judge, [`lake comparator --paranoid`](https://lean-lang.org/doc/reference/latest/ValidatingProofs/), on the two exports. It replays the proof through six checkers | `verdict.json` |
+| `verdict` | The two exports, and nothing to build | Runs Lean's own judge, [`lake comparator --paranoid`](https://lean-lang.org/doc/reference/latest/ValidatingProofs/), on the two exports. It replays the proof through six checkers | `verdict.json`, and `verdict.jwt`, a token that vouches for it |
 
 Only the `answer` job runs submitted code, and nothing it says in the answer's favour is
 believed. The `verdict` job runs none of the answer. It checks the challenge's export against the
 hash the `challenge` job gave out, and that hash travels as a job output, not through the store
 of files that a job which ran the answer could reach.
+
+**Who vouches for the verdict.** Every job of a run can write the run's store of files, and
+GitHub's record of a file does not say which job put it there. So a file named `verdict.json`
+proves nothing about who wrote it. The `verdict` job alone is permitted to ask GitHub for an
+identity token. It asks for one whose audience is the SHA-256 of `verdict.json`, and hands it on
+as `verdict.jwt`. A consumer of verdicts checks that token before it believes the verdict:
+its signature against GitHub's published keys, and the repository, run, attempt, workflow and
+commit it names against the consumer's own record of what it started. `judge/verify_token.py`
+does exactly that, with nothing but Python.
 
 The SHA-256 of a challenge's export is the problem's **fingerprint**. The export holds the
 statement and every definition it reaches, so the fingerprint changes when anything the statement
@@ -49,6 +58,18 @@ this repository, and every action is pinned by its full commit hash.
 be accepted is judged before the answer is touched and again after it. If both pass, the machine
 was working, and whatever happened in between belongs to the answer. So an answer that never
 finishes, or that the checker cannot read, is a rejection.
+
+A verdict that is a fault says which of three kinds it is. `machine`: something no answer could
+have caused, such as a challenge that would not build or a control that failed before the judge
+ran. `answer_side`: it rests on the job that ran the answer, such as a control that failed after
+the answer was built, or that job reporting a fault. `tampering`: something in the run wrote where
+it should not, such as a challenge export that does not match its hash. Only the first kind is a
+reason to think the checker itself is broken.
+
+**An answer's build is bounded**, so that it cannot easily turn its own check into a fault. It
+runs in a control group with a limit on memory and on processes. It is stopped when the disk runs
+short, and when its export grows too large. One time budget covers the build and the export
+together. Meeting a bound is a rejection, `resource_limit` or `timeout`.
 
 **The exit code alone is never believed.** On Ubuntu 24.04 as it comes, the judge's sandbox
 cannot start, and the judge then exits with 1, the same code as a rejection. The self-test has a
@@ -73,6 +94,8 @@ Reasons for a rejection:
 | `theorem_missing` | It does not declare the theorem | `answer`, `verdict`, or the form screen |
 | `export_failed` | It built, and what it built could not be exported | `answer` |
 | `timeout` | It did not finish inside the time budget, building or being checked | either |
+| `resource_limit` | It used more memory, more processes, more disk or a larger export than a check allows | either |
+| `runs_code` | The file would run code while it builds | The form screen, in `answer` |
 | `too_large`, `not_utf8`, `hidden_characters` | The form screen refused the file | `answer` |
 
 A reason from the `answer` job comes from a machine that ran the answer. It is believed because
@@ -81,6 +104,29 @@ it can only be a rejection.
 `checkers_disagree` is still a rejection, and it deserves a person's attention: either the answer
 leans on a fault in one checker, or a checker failed on a sound proof. It cannot be produced on
 demand, so its reading is tested on the judge's own wording only.
+
+## An answer is code
+
+Lean lets a file run code while it is built: a command such as `#eval` can do whatever the person
+building could do. The judge judges the proof and does not ask what else the file did. So a file
+with an honest proof beside such a command would be accepted, and then committed to its goal's
+repository, where it runs for everyone who builds the goal. The judge's sandbox protects only the
+checker.
+
+The form screen therefore refuses a file that would run code while it builds, with the reason
+`runs_code`. The rule is lexical and reads the raw text, comments and strings included. It refuses
+commands that run code or define syntax (`#eval`, `run_cmd`, `elab`, `macro`, `syntax`,
+`initialize`, `simproc` and their kin), the tactic `run_tac`, attributes that install code
+(`command_elab`, `tactic`, `implemented_by`, `extern`, `init` and their kin), and names that reach
+the system or the elaborator (`IO`, `unsafe`, `MetaM` and their kin). `judge/judge.py` has the list.
+
+No such list is complete for Lean, and the names are the thinnest part of it: `corpus/runs_code/
+macro.lean` reaches the file system through a macro without naming `IO` or `#eval` at all. That is
+why `macro` itself is refused, and why the screen is one layer of three. The others are outside
+this repository: every build of a goal runs in a sandbox, and committed answers are screened
+again when the rules change.
+
+The judge must hold with the screen off. The corpus's files that attack the judge are run that way.
 
 ## The corpus
 
@@ -98,9 +144,35 @@ implication is `sorry`. Some attack the checker and not the mathematics:
 - `sandbox_probe.lean` is an honest proof that refuses to build unless it finds itself in the
   sandbox. If the sandbox were ever loosened, it would stop being accepted.
 
+- `corpus/runs_code/` has one file for each of thirteen ways a file can run code while it builds.
+  Each holds an honest proof, so the judge alone would accept it. Each must be refused by the
+  screen, and each, built with the screen off, must leave a marker to show that it ran.
+- `fills_disk.lean` and `eats_memory.lean` use up the disk and the memory. Each must be a
+  rejection, `resource_limit`, and the control that runs after it must still pass.
+
 The self-test judges every honest answer in the template, which must be accepted, and every corpus
 file. It does the same for a one-problem goal that needs Mathlib, in `fixtures/`. It runs the
 three steps on one machine, which tests the judging and not the separation of the jobs.
+
+## When the answer job lies
+
+The `lies` workflow is the test of the separation. The `answer` job is the one job that runs
+submitted code, so nothing may rest on its word: code that escaped its sandbox, or a dependency's
+build files, could make it say anything and write anything into the run's store. For each lie, a
+real `challenge` job and a real `verdict` job run around a dishonest job in the answer's place,
+and a last job plays the consumer of verdicts.
+
+| The lie | How the run must end |
+| --- | --- |
+| None: an honest answer | Accepted, and the token vouches for the verdict |
+| It reports the named answer as exported and hands over another proof's export | Rejected: the theorem is not in the export |
+| It reports that the machine's controls failed | A fault of the kind `answer_side` |
+| It replaces the challenge's export in the store | A fault of the kind `tampering`: the export does not match the hash the `challenge` job gave out |
+| It puts an accepting verdict in the store before the `verdict` job runs | The real verdict replaces it, and the token vouches for the real one |
+| It replaces the verdict in the store after the `verdict` job has run | The token does not vouch for what is in the store |
+
+It tests the mechanism on a copy of `check.yml`'s wiring. `check.yml` itself has no switch that
+makes its answer job lie, and should not have one.
 
 ## Limits, stated plainly
 
@@ -110,6 +182,9 @@ three steps on one machine, which tests the judging and not the separation of th
   `lakefile.lean`. The dependencies' own build files do run there, before the answer is fetched.
   So a goal's pinned dependencies are trusted as far as the goal itself is. The cache is
   downloaded afresh for every job; nothing is kept between checks.
+- A goal's dependencies must be on the allow-list in `allowed-dependencies.json`, each package by
+  its address and its revision, and that is checked before any `lake` command runs. Today the list
+  holds Mathlib at one release and the packages that release pins.
 - The fingerprint is stricter than it needs to be. It also changes with the Lean release, with a
   dependency, and with a proof inside a definition the statement reaches.
 - The `answer` job's sandbox is this repository's own call to `bwrap`, with the arguments Lean's
@@ -128,7 +203,10 @@ three steps on one machine, which tests the judging and not the separation of th
 ```
 python3 judge/judge.py controls
 python3 judge/judge.py corpus --goal <a checkout of the goal template> --corpus corpus/corpus.json
-python3 judge/test_classify.py
+python3 judge/test_classify.py       # how the judge's output is read
+python3 judge/test_screen.py         # the screen for files that run code
+python3 judge/test_verify_token.py   # the check of a verdict's token (needs openssl)
+python3 judge/test_deps.py           # the check of a goal's dependencies
 ```
 
 You need Lean 4.36, Python 3.11 or later, and

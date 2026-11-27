@@ -64,11 +64,28 @@ PRIMITIVES = ("Nat.add Nat.sub Nat.mul Nat.pow Nat.gcd Nat.div Nat.mod Nat.beq N
               "String.ofList Char.ofNat List eagerReduce Nat String String.mk Char optParam autoParam semiOutParam outParam").split()
 QUOT = ["Quot", "Quot.mk", "Quot.lift", "Quot.ind"]
 # The only reasons the answer step may give for a rejection. Each can only count against the answer.
-ANSWER_REASONS = ("build_failed", "theorem_missing", "export_failed", "timeout", "too_large", "not_utf8", "hidden_characters")
+ANSWER_REASONS = ("build_failed", "theorem_missing", "export_failed", "timeout", "resource_limit", "runs_code", "too_large", "not_utf8", "hidden_characters")
 NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_']*(\.[A-Za-z_][A-Za-z0-9_']*)*")
 ID = re.compile(r"[a-z][a-z0-9_]{0,62}")
 HIDDEN = re.compile("[​-‏  ‪-‮⁠-⁤⁦-⁩﻿￹-￻\U000e0001-\U000e007f]")
 MAX_ANSWER = 256 * 1024
+MAX_EXPORT = 1 << 30          # bytes of an answer's export
+DISK_MARGIN = 2 << 30         # the build is stopped when less than this is free
+CONTROL_SECONDS = 180
+CGROUP = os.environ.get("PG_CGROUP", "")  # a control group that setup.sh made, with limits on memory and processes
+# What an answer may not hold, because it runs code while the file builds or lets the file write
+# commands of its own. Each was shown to run code: corpus/runs_code/ has one file for each way in.
+# The rule is lexical and reads the raw text, comments and strings included. A wrong refusal costs
+# a reworded comment; a lexer of ours that disagreed with Lean's would cost more.
+W = lambda *words: r"(?<![\w'])(?:%s)(?![\w'])" % "|".join(words)
+RUNS_CODE = (
+    ("a command that runs code", r"#eval|" + W("run_cmd", "run_elab", "run_meta", "initialize", "builtin_initialize")),
+    ("a command that defines syntax or what it does", W("elab", "elab_rules", "macro", "macro_rules", "syntax", "declare_syntax_cat", r"(?:builtin_)?d?simproc(?:_decl)?")),
+    ("a tactic or term that runs code", W("run_tac", "by_elab")),
+    ("a name that reaches the system or the elaborator", W("IO", "EIO", "BaseIO", "unsafeIO", "unsafeBaseIO", "unsafe", "MetaM", "TacticM", "TermElabM", "CommandElabM", "CoreM", "MacroM", "SimpM", "DelabM")),
+)
+ATTRIBUTE = re.compile(r"(?:@\[|" + W("attribute") + r"\s*\[)([^\]]*)\]")
+CODE_ATTRIBUTE = re.compile(W(r"\w*(?:elab|macro|delab|tactic|simproc|formatter|parenthesizer|unexpander)\w*", "implemented_by", "extern", "export", "init", "builtin_init"))
 GOAL_ERRORS = (AssertionError, KeyError, OSError, tomllib.TOMLDecodeError)
 sha = lambda b: hashlib.sha256(b).hexdigest()
 
@@ -80,38 +97,61 @@ def sha_file(path):
     return h.hexdigest()
 
 
-def run(cmd, cwd, timeout, env=None, stdout_to=None):
-    """One command in a process group of its own, the whole group killed at the time limit.
-    Returns (exit code, or None at the limit; stdout; stderr; seconds)."""
-    t0 = time.time(); sink = open(stdout_to, "wb") if stdout_to else subprocess.PIPE
+def run(cmd, cwd, timeout, env=None, stdout_to=None, watch=None):
+    """One command in a process group of its own, the whole group killed at the time limit, or when
+    `watch`, asked once a second, gives a reason to stop.
+    Returns (exit code; stdout; stderr; seconds). The exit code is None at the time limit, and the
+    watcher's reason, a string, if the watcher stopped it."""
+    t0 = time.time(); sink = open(stdout_to, "wb") if stdout_to else subprocess.PIPE; rc = out = err = None
     try:
         p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=sink, stderr=subprocess.PIPE, start_new_session=True)
-        try:
-            out, err = p.communicate(timeout=timeout); rc = p.returncode
-        except subprocess.TimeoutExpired:
-            try: os.killpg(p.pid, signal.SIGKILL)
-            except ProcessLookupError: pass
-            out, err = p.communicate(); rc = None
+        while True:
+            try:
+                out, err = p.communicate(timeout=1); rc = p.returncode; break
+            except subprocess.TimeoutExpired:
+                why = watch() if watch else None
+                if why is None and time.time() - t0 < timeout: continue
+                try: os.killpg(p.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError): pass
+                out, err = p.communicate(); rc = why; break
     finally:
         if stdout_to: sink.close()
     text = lambda b: (b or b"").decode("utf-8", "replace")
     return rc, text(out), text(err), round(time.time() - t0, 1)
 
 
-def in_sandbox(cmd, goal, timeout, stdout_to=None):
+def in_sandbox(cmd, goal, timeout, stdout_to=None, watch=None):
     """A command on the goal with no network, a read-only system, an empty home and a process space
     of its own. It can write only the goal's .lake directory. The arguments are the ones Lean's own
-    judge gives bwrap (Lake/CLI/Check.lean in the 4.36.0 release)."""
+    judge gives bwrap (Lake/CLI/Check.lean in the 4.36.0 release).
+
+    The writable .lake holds .lake/packages too, so an answer can rewrite a dependency's compiled
+    files for its own build. That is harmless only while two things stay true. The verdict step
+    replays everything in the export against a challenge export the answer never touched. And once
+    an answer has been built, nothing outside the sandbox runs `lake` in that goal directory:
+    whatever did would run what the answer left there.
+
+    Where setup.sh made a control group, the command runs inside it, so that an answer cannot take
+    all of the machine's memory or fill its process table."""
     env = {"PATH": os.environ["PATH"], "LEAN_ABORT_ON_PANIC": "1"}
     dot = os.path.join(goal, ".lake"); os.makedirs(dot, exist_ok=True)
-    if NO_SANDBOX: return run(cmd, goal, timeout, env=dict(os.environ, **env), stdout_to=stdout_to)
+    if NO_SANDBOX: return run(cmd, goal, timeout, env=dict(os.environ, **env), stdout_to=stdout_to, watch=watch)
     lean = os.path.dirname(os.path.dirname(os.path.realpath(shutil.which("lake"))))
     a = ["bwrap", "--ro-bind", "/", "/", "--tmpfs", "/home", "--tmpfs", "/root", "--tmpfs", "/run/user", "--tmpfs", "/tmp", "--dir", "/tmp/home",
          "--dev", "/dev", "--proc", "/proc", "--clearenv", "--tmpfs", "/run", "--tmpfs", "/var",
          "--ro-bind", goal, goal, "--ro-bind", lean, lean, "--bind", dot, dot]
     for k, v in env.items(): a += ["--setenv", k, v]
     a += ["--setenv", "HOME", "/tmp/home", "--unshare-all", "--die-with-parent", "--new-session", "--chdir", goal, "--"]
-    return run(a + cmd, goal, timeout, stdout_to=stdout_to)
+    if CGROUP:
+        # The shell puts itself in the group and then becomes bwrap, so every process of the build is in it.
+        a = ["bash", "-c", 'echo $$ | sudo -n tee "$0/cgroup.procs" > /dev/null && exec "$@"', CGROUP] + a
+    return run(a + cmd, goal, timeout, stdout_to=stdout_to, watch=watch)
+
+
+def oom_kills():
+    """How many times the control group's memory limit has killed a process, or None without a group."""
+    try: return int(re.search(r"^oom_kill (\d+)$", open(os.path.join(CGROUP, "memory.events")).read(), re.M).group(1))
+    except (OSError, AttributeError): return None
 
 
 def comparator(cwd, challenge, solution, theorem, axioms, timeout, exports=None):
@@ -121,6 +161,7 @@ def comparator(cwd, challenge, solution, theorem, axioms, timeout, exports=None)
     cmd = ["lake", "comparator", "--paranoid", "--config", cfg]
     if exports: cmd += ["--challenge-from-export", exports[0], "--solution-from-export", exports[1]]
     if NO_SANDBOX: cmd.append("--inadvisably-no-sandbox")
+    if exports and CGROUP: cmd = ["bash", "-c", 'echo $$ | sudo -n tee "$0/cgroup.procs" > /dev/null && exec "$@"', CGROUP] + cmd
     try: return run(cmd, cwd, timeout)
     finally: os.unlink(cfg)
 
@@ -162,7 +203,7 @@ def read_strict(rc, out, err, theorem):
 
 def control(solution):
     """The judge on a pair of the checker's own files. Returns [outcome, reason code, message]."""
-    rc, out, err, _ = comparator(CONTROLS, "Challenge", solution, "Control.two_plus_two", STANDARD_AXIOMS, 600)
+    rc, out, err, _ = comparator(CONTROLS, "Challenge", solution, "Control.two_plus_two", STANDARD_AXIOMS, CONTROL_SECONDS)
     if rc == 0 and OK_LINE in out: return ["accepted", "accepted", OK_LINE]
     lines = [l.strip() for l in (out + err).split("\n") if l.strip()]
     if rc == 1 and any(l.startswith("error: Illegal axiom detected: 'sorryAx'") for l in lines): return ["rejected", "illegal_axiom", "error: Illegal axiom detected: 'sorryAx'"]
@@ -208,10 +249,10 @@ def plan(goal, problem, kind):
     return mk("Problems.cut_" + problem, "import %s\n\ntheorem %s %s : %s := sorry\n" % (stm, lean_name(c["theorem"]), hyps, lean_name(parent["statement"])), "Cuts." + problem, "Cuts/%s.lean" % problem, lean_name(c["theorem"]))
 
 
-def export(goal, module, p, path):
+def export(goal, module, p, path, timeout=900, watch=None):
     """Lean's own exporter on one module: the theorem, the axioms, and all they reach."""
     decls = (QUOT if "Quot.sound" in p["axioms"] else []) + [p["theorem"]] + p["axioms"] + PRIMITIVES
-    return in_sandbox(["lake", "env", "leanexport", module, "--"] + decls, goal, 900, stdout_to=path)
+    return in_sandbox(["lake", "env", "leanexport", module, "--"] + decls, goal, timeout, stdout_to=path, watch=watch)
 
 
 def first_error(text, default):
@@ -231,38 +272,65 @@ def make_challenge(goal, problem, kind, out):
     return dict(p, fingerprint=sha_file(exp), export_bytes=os.path.getsize(exp), seconds=round(time.time() - t0, 1))
 
 
-def screen(raw, theorem):
-    """The form screen. Returns a reason for refusal, or None. Soundness never rests on it."""
+def runs_code(text):
+    """The first thing in a file that would run code while it builds, as (what it is, the text, its line), or None."""
+    found = []
+    for what, pattern in RUNS_CODE:
+        m = re.search(pattern, text)
+        if m: found.append((m.start(), what, m.group(0)))
+    for a in ATTRIBUTE.finditer(text):
+        m = CODE_ATTRIBUTE.search(a.group(1))
+        if m: found.append((a.start(1) + m.start(), "an attribute that installs code", m.group(0)))
+    if not found: return None
+    at, what, piece = min(found)
+    return what, piece, text.count("\n", 0, at) + 1
+
+
+def screen(raw, theorem, code=True):
+    """The form screen. Returns a reason for refusal, or None. Soundness never rests on it: the
+    judge must hold with `code` off, and the corpus runs the files that attack the judge that way."""
     if len(raw) > MAX_ANSWER: return "too_large", "the file is larger than %d bytes" % MAX_ANSWER
     try: text = raw.decode("utf-8")
     except UnicodeDecodeError: return "not_utf8", "the file is not valid UTF-8"
     if HIDDEN.search(text): return "hidden_characters", "the file holds direction-changing or zero-width characters"
     if not re.search(r"^\s*(?:theorem|lemma)\s+%s(?![A-Za-z0-9_'.])" % re.escape(theorem), text, re.M):
         return "theorem_missing", "the file does not declare %s" % theorem
+    hit = runs_code(text) if code else None
+    if hit: return "runs_code", "line %d holds `%s`, %s. An answer may run no code while it builds" % (hit[2], hit[1], hit[0])
     return None
 
 
-def build_answer(goal, problem, kind, raw, budget, out, restore=False):
+def build_answer(goal, problem, kind, raw, budget, out, restore=False, screen_code=True, disk_margin=DISK_MARGIN):
     """The answer step. Returns a report whose state is `exported` (the export is
-    <out>/solution.ndjson) or `rejected`, with a reason from ANSWER_REASONS."""
-    p = plan(goal, problem, kind); os.makedirs(out, exist_ok=True)
+    <out>/solution.ndjson) or `rejected`, with a reason from ANSWER_REASONS. One time budget covers
+    the build and the export together, and both are stopped if the disk runs short."""
+    p = plan(goal, problem, kind); os.makedirs(out, exist_ok=True); t0 = time.time()
     rep = {"problem": problem, "answer_kind": kind, "theorem": p["theorem"], "answer_sha256": sha(raw)}
-    no = lambda code, message, secs=0, tail="": dict(rep, state="rejected", reason_code=code, message=message[:300], seconds=secs, log_tail=tail[-4000:])
-    bad = screen(raw, p["theorem"])
+    no = lambda code, message, tail="": dict(rep, state="rejected", reason_code=code, message=message[:300], seconds=round(time.time() - t0, 1), log_tail=tail[-4000:])
+    bad = screen(raw, p["theorem"], code=screen_code)
     if bad: return no(*bad)
     path = os.path.join(goal, p["answer_path"]); kept = open(path, "rb").read() if restore and os.path.exists(path) else None
     os.makedirs(os.path.dirname(path), exist_ok=True); open(path, "wb").write(raw)
+    exp = os.path.join(out, "solution.ndjson"); killed = oom_kills()
+    disk = lambda: "the disk" if shutil.disk_usage(goal).free < disk_margin else None
+    size = lambda: disk() or ("the size of the export" if os.path.exists(exp) and os.path.getsize(exp) > MAX_EXPORT else None)
+    over = lambda why, tail: no("resource_limit", "the answer used more of %s than a check allows" % why, tail)
+    late = lambda tail: no("timeout", "the answer was not built and exported inside the time budget of %d seconds" % budget, tail)
     try:
-        rc, o, e, secs = in_sandbox(["lake", "build", p["solution_module"]], goal, budget); text = o + e
-        if rc is None: return no("timeout", "the answer did not build inside the time budget of %d seconds" % budget, secs, text)
-        if rc != 0: return no("build_failed", first_error(text, "the answer does not build"), secs, text)
-        exp = os.path.join(out, "solution.ndjson"); rc, _, e2, s2 = export(goal, p["solution_module"], p, exp)
+        rc, o, e, _ = in_sandbox(["lake", "build", p["solution_module"]], goal, budget, watch=disk); text = o + e
+        if rc is None: return late(text)
+        if isinstance(rc, str): return over(rc, text)
+        if killed is not None and oom_kills() != killed: return over("the memory", text)
+        if rc != 0: return no("build_failed", first_error(text, "the answer does not build"), text)
+        rc, _, e2, _ = export(goal, p["solution_module"], p, exp, timeout=max(1, budget - (time.time() - t0)), watch=size)
         if rc != 0:
             if os.path.exists(exp): os.unlink(exp)
-            if rc is None: return no("timeout", "the answer could not be exported in time", secs + s2, e2)
-            if ("Constant %s not found" % p["theorem"]) in e2: return no("theorem_missing", "the answer does not declare %s" % p["theorem"], secs + s2, e2)
-            return no("export_failed", "the answer built, and what it built could not be exported", secs + s2, e2)
-        return dict(rep, state="exported", export_bytes=os.path.getsize(exp), seconds=round(secs + s2, 1), log_tail=text[-4000:])
+            if rc is None: return late(e2)
+            if isinstance(rc, str): return over(rc, e2)
+            if killed is not None and oom_kills() != killed: return over("the memory", e2)
+            if ("Constant %s not found" % p["theorem"]) in e2: return no("theorem_missing", "the answer does not declare %s" % p["theorem"], e2)
+            return no("export_failed", "the answer built, and what it built could not be exported", e2)
+        return dict(rep, state="exported", export_bytes=os.path.getsize(exp), seconds=round(time.time() - t0, 1), log_tail=text[-4000:])
     finally:
         if restore:
             if kept is None: os.unlink(path)
@@ -272,9 +340,10 @@ def build_answer(goal, problem, kind, raw, budget, out, restore=False):
 def judge_exports(p, challenge, solution, budget):
     """The verdict step's judgement: Lean's judge on two exports, in an empty directory.
     Returns (outcome, reason code, message, seconds, log tail)."""
-    empty = tempfile.mkdtemp(prefix="pg-verdict-")
+    empty = tempfile.mkdtemp(prefix="pg-verdict-"); killed = oom_kills()
     try: rc, o, e, secs = comparator(empty, p["challenge_module"], p["solution_module"], p["theorem"], p["axioms"], budget, exports=(os.path.abspath(challenge), os.path.abspath(solution)))
     finally: shutil.rmtree(empty, ignore_errors=True)
+    if killed is not None and oom_kills() != killed: return ("rejected", "resource_limit", "checking the answer used more of the memory than a check allows", secs, (o + e)[-4000:])
     return read_strict(rc, o, e, p["theorem"]) + (secs, (o + e)[-4000:])
 
 
@@ -339,19 +408,22 @@ def main():
              "goal": {"repository": os.environ.get("PG_GOAL_REPOSITORY"), "commit": os.environ.get("PG_GOAL_COMMIT")},
              "judge": {"tool": "lake comparator --paranoid, from two exports", "lean": lean_version(), "sandbox_route": os.environ.get("PG_SANDBOX_ROUTE")},
              "answer_sha256": A.answer_sha256, "fingerprint": A.fingerprint or None}
-        fault = lambda code, message: V.update(outcome="fault", reason_code=code, message=message[:300])
+        # A fault is one of three kinds. Only a `machine` fault, which no answer could have caused, should
+        # count towards stopping all checks. An `answer_side` fault rests on the answer job, which ran the
+        # answer. `tampering` means something in the run wrote where it should not, and wants an alert.
+        fault = lambda code, message, kind="answer_side": V.update(outcome="fault", fault_kind=kind, reason_code=code, message=message[:300])
         report = None
         try: report = json.load(open(os.path.join(A.answer_dir, "answer.json"), encoding="utf-8"))
         except (OSError, ValueError): pass
         solution = os.path.join(A.answer_dir, "solution.ndjson")
-        if jobs.get("challenge", "success") != "success": fault("challenge_job", "the goal's challenge could not be built and exported")
-        elif not os.path.isfile(A.challenge) or sha_file(A.challenge) != A.fingerprint: fault("challenge_export", "the challenge's export is not the one the challenge job made")
+        if jobs.get("challenge", "success") != "success": fault("challenge_job", "the goal's challenge could not be built and exported", "machine")
+        elif not os.path.isfile(A.challenge) or sha_file(A.challenge) != A.fingerprint: fault("challenge_export", "the challenge's export is not the one the challenge job made", "tampering")
         elif jobs.get("answer", "success") != "success" or not isinstance(report, dict): fault("answer_job", "the answer job did not finish")
         else:
             p = json.load(open(A.plan, encoding="utf-8")); V.update(problem=p["problem"], answer_kind=p["answer_kind"], theorem=p["theorem"])
             V["answer_job"] = {x: report.get(x) for x in ("state", "reason_code", "message", "answer_sha256", "seconds", "export_bytes", "sandbox_route")}
             ok, before = controls(); V["controls"] = before
-            if not ok: fault("controls", "the judge is not working on this machine")
+            if not ok: fault("controls", "the judge is not working on this machine", "machine")
             elif A.answer_sha256 and report.get("answer_sha256") != A.answer_sha256: fault("answer_hash", "the answer job did not build the answer that was named")
             elif report.get("state") == "fault": fault(str(report.get("reason_code"))[:40], "the answer job: %s" % report.get("message"))
             elif report.get("state") == "rejected" and report.get("reason_code") in ANSWER_REASONS:
@@ -369,22 +441,36 @@ def main():
     goal = os.path.abspath(A.goal); ok, detail = controls()
     if not ok: sys.exit("the controls misbehaved: %s" % json.dumps(detail))
     work = tempfile.mkdtemp(prefix="pg-corpus-"); made, wrong, n = {}, 0, 0
-    def one(label, problem, kind, raw, want, budget=900, isolate=False):
-        nonlocal wrong, n
+    def say(good, label, outcome, code, secs, note=""):
+        nonlocal wrong
+        wrong += not good
+        print("%-5s %-46s %-9s %-20s %5.1fs  %s" % ("ok" if good else "WRONG", label, outcome, code, secs, note), flush=True)
+    def one(label, problem, kind, raw, want, budget=900, isolate=False, screen_code=True, headroom=None):
+        nonlocal n
         n += 1; key = (problem, kind)
         if key not in made:
             made[key] = make_challenge(goal, problem, kind, os.path.join(work, "c%d" % len(made)))
             print("      challenge %-32s fingerprint %s  export %d bytes  %.1fs" % ("%s (%s)" % key, made[key]["fingerprint"][:16], made[key]["export_bytes"], made[key]["seconds"]), flush=True)
         p = made[key]; out = os.path.join(work, "a%d" % n); g = goal
         if isolate: g = os.path.join(work, "g%d" % n); shutil.copytree(goal, g, symlinks=True)
-        rep = build_answer(g, problem, kind, raw, budget, out, restore=True)
+        margin = DISK_MARGIN if headroom is None else shutil.disk_usage(g).free - headroom
+        rep = build_answer(g, problem, kind, raw, budget, out, restore=True, screen_code=screen_code, disk_margin=margin)
         if rep["state"] == "exported":
             outcome, code, message, secs, _ = judge_exports(p, os.path.join(work, "c%d" % list(made).index(key), "challenge.ndjson"), os.path.join(out, "solution.ndjson"), budget)
             secs += rep["seconds"]
         else: outcome, code, message, secs = "rejected", rep["reason_code"], rep["message"], rep["seconds"]
         if isolate: shutil.rmtree(g, ignore_errors=True)
-        good = (outcome, code) == tuple(want); wrong += not good
-        print("%-5s %-46s %-9s %-20s %5.1fs  %s" % ("ok" if good else "WRONG", label, outcome, code, secs, "" if good else "wanted %s/%s: %s" % (want[0], want[1], message[:110])), flush=True)
+        good = (outcome, code) == tuple(want)
+        say(good, label, outcome, code, secs, "" if good else "wanted %s/%s: %s" % (want[0], want[1], message[:110]))
+    def ran(label, problem, kind, raw, marker, then_build):
+        """Shows that a file the screen refuses does run code: built with the screen off, in a copy
+        of the goal, it leaves its marker under .lake. Some need a second file to import them."""
+        nonlocal n
+        n += 1; g = os.path.join(work, "g%d" % n); shutil.copytree(goal, g, symlinks=True); t0 = time.time()
+        rep = build_answer(g, problem, kind, raw, 300, os.path.join(work, "a%d" % n), restore=False, screen_code=False)
+        if then_build: in_sandbox(["lake", "build", then_build], g, 300)
+        good = os.path.exists(os.path.join(g, marker)); shutil.rmtree(g, ignore_errors=True)
+        say(good, label, "ran code" if good else "did not", rep["state"], time.time() - t0, "" if good else "with the screen off it left no %s" % marker)
     for f in sorted(os.listdir(os.path.join(goal, "Proofs"))):
         pid = f[:-5]; kind = "refutation" if pid.endswith("_neg") else "proof"; pid = pid[:-4] if kind == "refutation" else pid
         one("honest %s of %s" % (kind, pid), pid, kind, open(os.path.join(goal, "Proofs", f), "rb").read(), ("accepted", "accepted"))
@@ -393,7 +479,10 @@ def main():
     C = json.load(open(A.corpus, encoding="utf-8")); base = os.path.dirname(os.path.abspath(A.corpus))
     for e in C["answers"]:
         if e.get("needs_sandbox") and NO_SANDBOX: print("skip  corpus %-39s it tests the sandbox, which is off" % e["file"], flush=True); continue
-        one("corpus " + e["file"], e["problem"], e["kind"], open(os.path.join(base, e["file"]), "rb").read(), (e["outcome"], e["reason_code"]), budget=e.get("budget", 900), isolate=bool(e.get("isolate")))
+        if e.get("needs_limits") and not CGROUP: print("skip  corpus %-39s it tests a limit this machine does not set" % e["file"], flush=True); continue
+        raw = open(os.path.join(base, e["file"]), "rb").read()
+        one("corpus " + e["file"], e["problem"], e["kind"], raw, (e["outcome"], e["reason_code"]), budget=e.get("budget", 900), isolate=bool(e.get("isolate")), screen_code=e.get("screen", True), headroom=e.get("disk_headroom"))
+        if e.get("marker"): ran("       with the screen off", e["problem"], e["kind"], raw, e["marker"], e.get("then_build"))
     ok, after = controls(after=True); shutil.rmtree(work, ignore_errors=True)
     if not ok: sys.exit("the judge stopped working on this machine during the corpus: %s" % json.dumps(after))
     print("%d wrong" % wrong); sys.exit(1 if wrong else 0)

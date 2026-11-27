@@ -8,7 +8,12 @@
 #    judge then sees only the two exports.
 # 3. The same for a goal that needs Mathlib: its dependencies and their build cache come first.
 # 4. How the judge's output is read, on the judge's own wording, for the readings that cannot be
-#    produced on demand.
+#    produced on demand; the screen for files that run code; the check of a verdict's token; and
+#    the check of a goal's dependencies. Each of these is a small table of cases.
+#
+# The corpus holds one file for each way a file can run code while it builds. Each must be refused
+# by the screen, and each must be shown to run code with the screen off. It also holds an answer
+# that fills the disk and one that takes all the memory, which must be rejections and not faults.
 name: selftest
 
 on:
@@ -65,6 +70,12 @@ jobs:
 
       - name: How the judge's output is read, and that added text never changes a reading
         run: python3 judge/test_classify.py
+      - name: The screen for files that run code
+        run: python3 judge/test_screen.py
+      - name: The check of the token that vouches for a verdict
+        run: python3 judge/test_verify_token.py
+      - name: The check of a goal's dependencies
+        run: python3 judge/test_deps.py
 
   mathlib:
     runs-on: ubuntu-24.04
@@ -75,10 +86,8 @@ jobs:
           persist-credentials: false
       - name: Install the fixture's Lean release and let the sandbox start
         run: bash judge/setup.sh fixtures/mathlib-goal
-      - name: Resolve Mathlib at the fixture's tag
-        # The fixture carries no manifest; a real goal commits one and skips this step.
-        run: cd fixtures/mathlib-goal && lake update
-      - name: Bring in the dependencies and their build cache
+      - name: Check the dependencies against the allow-list, then bring them in with their build cache
+        # The fixture commits its lake-manifest.json, as a real goal does, so the check comes first.
         run: bash judge/deps.sh fixtures/mathlib-goal
       - name: The honest answer accepted, the dishonest ones refused
         run: python3 judge/judge.py corpus --goal fixtures/mathlib-goal --corpus fixtures/mathlib-corpus/corpus.json

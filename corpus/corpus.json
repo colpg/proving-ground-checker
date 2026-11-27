@@ -111,7 +111,8 @@
    "kind": "proof",
    "outcome": "rejected",
    "reason_code": "checker_rejected",
-   "what": "A theorem added to the environment with Lean's own check switched off. It builds, and the judge's checkers refuse it."
+   "what": "A theorem added to the environment with Lean's own check switched off. It builds, and the judge's checkers refuse it.",
+   "screen": false
   },
   {
    "file": "prints_judge_wording.lean",
@@ -119,7 +120,8 @@
    "kind": "proof",
    "outcome": "rejected",
    "reason_code": "checker_rejected",
-   "what": "The bogus proof of skips_the_kernel.lean, printing every line the judge prints for an answer all its checkers accept. Its text must change nothing."
+   "what": "The bogus proof of skips_the_kernel.lean, printing every line the judge prints for an answer all its checkers accept. Its text must change nothing.",
+   "screen": false
   },
   {
    "file": "honest_but_loud.lean",
@@ -127,7 +129,8 @@
    "kind": "proof",
    "outcome": "accepted",
    "reason_code": "accepted",
-   "what": "An honest proof that prints the judge's refusals while it builds. Its text must change nothing either."
+   "what": "An honest proof that prints the judge's refusals while it builds. Its text must change nothing either.",
+   "screen": false
   },
   {
    "file": "never_finishes.lean",
@@ -136,7 +139,8 @@
    "outcome": "rejected",
    "reason_code": "timeout",
    "budget": 60,
-   "what": "An answer that never finishes building. A rejection that counts, not a fault."
+   "what": "An answer that never finishes building. A rejection that counts, not a fault.",
+   "screen": false
   },
   {
    "file": "writes_into_build.lean",
@@ -145,7 +149,8 @@
    "outcome": "rejected",
    "reason_code": "export_failed",
    "isolate": true,
-   "what": "An honest proof that, while it builds, replaces a compiled file of the goal's library with junk."
+   "what": "An honest proof that, while it builds, replaces a compiled file of the goal's library with junk.",
+   "screen": false
   },
   {
    "file": "sandbox_probe.lean",
@@ -154,7 +159,147 @@
    "outcome": "accepted",
    "reason_code": "accepted",
    "needs_sandbox": true,
-   "what": "An honest proof that refuses to build unless it is inside the sandbox: no network, a read-only project, a home that is not the machine's, a process space of its own."
+   "what": "An honest proof that refuses to build unless it is inside the sandbox: no network, a read-only project, a home that is not the machine's, a process space of its own.",
+   "screen": false
+  },
+  {
+   "file": "fills_disk.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "resource_limit",
+   "screen": false,
+   "isolate": true,
+   "disk_headroom": 1073741824,
+   "what": "An answer that writes files for as long as it is allowed to. The build is stopped when the disk runs short. The test lets it write about a gigabyte."
+  },
+  {
+   "file": "eats_memory.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "resource_limit",
+   "screen": false,
+   "needs_limits": true,
+   "what": "An answer that takes memory until none is left. The build's control group stops it, not the machine."
+  },
+  {
+   "file": "runs_code/eval.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-eval",
+   "what": "The command `#eval`. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/run_cmd.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-run_cmd",
+   "what": "The command `run_cmd`. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/run_elab.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-run_elab",
+   "what": "The command `run_elab`. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/run_meta.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-run_meta",
+   "what": "The command `run_meta`. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/elab.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-elab",
+   "what": "A command of the file's own, defined with `elab`. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/elab_rules.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-elab_rules",
+   "what": "A command of the file's own, defined with `syntax` and `elab_rules`. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/run_tac.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-run_tac",
+   "what": "The tactic `run_tac`, inside a proof. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/command_elab.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-command_elab",
+   "what": "The attribute `command_elab`. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/term_elab.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-term_elab",
+   "what": "The attribute `term_elab`. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/tactic_attr.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-tactic_attr",
+   "what": "The attribute `tactic`. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/simproc.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-simproc",
+   "what": "A `simproc`, run when `simp` is called. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/initialize.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-initialize",
+   "then_build": "Proofs.xor2_le_5",
+   "what": "The command `initialize`. It runs when another file imports this one, as a closing proof does. The proof beside it is honest, so the judge alone would accept the file."
+  },
+  {
+   "file": "runs_code/macro.lean",
+   "problem": "xor2_le_4",
+   "kind": "proof",
+   "outcome": "rejected",
+   "reason_code": "runs_code",
+   "marker": ".lake/ran-macro",
+   "what": "A `macro` that writes an evaluating command without naming one, and reaches the system without naming it. The proof beside it is honest, so the judge alone would accept the file."
   }
  ]
 }

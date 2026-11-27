@@ -15,7 +15,8 @@
    "kind": "proof",
    "outcome": "rejected",
    "reason_code": "checker_rejected",
-   "what": "A theorem added with Lean's own check switched off, using only what Mathlib brings with it. It builds, and the judge's checkers refuse it."
+   "what": "A theorem added with Lean's own check switched off, using only what Mathlib brings with it. It builds, and the judge's checkers refuse it.",
+   "screen": false
   }
  ]
 }
