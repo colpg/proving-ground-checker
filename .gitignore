@@ -3,3 +3,4 @@ fixtures/mathlib-goal/lake-manifest.json
 goal/
 verdict.json
 *.log
+__pycache__/
